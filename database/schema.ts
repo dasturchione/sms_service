@@ -243,6 +243,37 @@ export class GatewaySchema extends BaseModel {
   declare updatedAt: DateTime | null
 }
 
+export class JobSchema extends BaseModel {
+  static $columns = ['attempts', 'createdAt', 'dedupeKey', 'id', 'lastError', 'leaseExpiresAt', 'lockedBy', 'maxAttempts', 'payload', 'queue', 'runAt', 'status', 'updatedAt'] as const
+  $columns = JobSchema.$columns
+  @column()
+  declare attempts: number
+  @column.dateTime({ autoCreate: true })
+  declare createdAt: DateTime
+  @column()
+  declare dedupeKey: string | null
+  @column({ isPrimary: true })
+  declare id: bigint | number
+  @column()
+  declare lastError: string | null
+  @column.dateTime()
+  declare leaseExpiresAt: DateTime | null
+  @column()
+  declare lockedBy: string | null
+  @column()
+  declare maxAttempts: number
+  @column()
+  declare payload: any
+  @column()
+  declare queue: string
+  @column.dateTime()
+  declare runAt: DateTime
+  @column()
+  declare status: string
+  @column.dateTime({ autoCreate: true, autoUpdate: true })
+  declare updatedAt: DateTime | null
+}
+
 export class OperatorUssdCommandSchema extends BaseModel {
   static $columns = ['command', 'createdAt', 'id', 'isActive', 'kind', 'operatorId', 'parserKey', 'steps', 'updatedAt'] as const
   $columns = OperatorUssdCommandSchema.$columns
