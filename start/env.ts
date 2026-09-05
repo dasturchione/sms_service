@@ -45,4 +45,24 @@ export default await Env.create(new URL('../', import.meta.url), {
    * A plain API instance behind a load balancer should set this to false.
    */
   GATEWAY_NODE_ENABLED: Env.schema.boolean.optional(),
+
+  // Background jobs
+  /**
+   * Whether this instance drains the job queues. Unrelated to the gateway
+   * role: webhook delivery is stateless and can run on any instance.
+   */
+  WORKER_ENABLED: Env.schema.boolean.optional(),
+
+  /**
+   * How long a tenant's webhook receiver has to answer before the delivery is
+   * treated as failed and retried.
+   */
+  WEBHOOK_TIMEOUT_MS: Env.schema.number.optional(),
+
+  // Monitoring
+  /**
+   * Bearer token guarding `/metrics`. Unset leaves the endpoint open, which is
+   * fine only when it is not reachable from outside the cluster.
+   */
+  METRICS_TOKEN: Env.schema.string.optional(),
 })

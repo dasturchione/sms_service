@@ -6,18 +6,34 @@
 export const controllers = {
   AccessTokens: () => import('#controllers/access_tokens_controller'),
   admin: {
+    Explorer: () => import('#controllers/admin/explorer_controller'),
+    Fleet: () => import('#controllers/admin/fleet_controller'),
     Gateways: () => import('#controllers/admin/gateways_controller'),
+    Jobs: () => import('#controllers/admin/jobs_controller'),
+    Operators: () => import('#controllers/admin/operators_controller'),
+    Overview: () => import('#controllers/admin/overview_controller'),
+    Reports: () => import('#controllers/admin/reports_controller'),
+    Staff: () => import('#controllers/admin/staff_controller'),
+    Tenants: () => import('#controllers/admin/tenants_controller'),
   },
   auth: {
     ClientTokens: () => import('#controllers/auth/client_tokens_controller'),
   },
+  Balances: () => import('#controllers/balances_controller'),
   gateways: {
     GatewayProvision: () => import('#controllers/gateways/gateway_provision_controller'),
     GatewayRegistration: () => import('#controllers/gateways/gateway_registration_controller'),
   },
+  Health: () => import('#controllers/health_controller'),
   NewAccount: () => import('#controllers/new_account_controller'),
   Profile: () => import('#controllers/profile_controller'),
+  reports: {
+    Reports: () => import('#controllers/reports/reports_controller'),
+  },
   sms: {
     Sms: () => import('#controllers/sms/sms_controller'),
+  },
+  webhooks: {
+    WebhookEndpoints: () => import('#controllers/webhooks/webhook_endpoints_controller'),
   },
 }

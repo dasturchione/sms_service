@@ -58,6 +58,12 @@ export const middleware = router.named({
   abilities: () => import('#middleware/abilities_middleware'),
 
   /**
+   * Authenticates a platform operator and keeps tenant staff out of the back
+   * office.
+   */
+  platformAdmin: () => import('#middleware/platform_admin_middleware'),
+
+  /**
    * Authenticates an Android device.
    */
   gatewayAuth: () => import('#middleware/gateway_auth_middleware'),

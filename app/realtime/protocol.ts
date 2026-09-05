@@ -74,6 +74,29 @@ export type SmsDeliveredPayload = {
   deliveredAt: string | null
 }
 
+/**
+ * A USSD session as the device sees it.
+ *
+ * `steps` are the replies to send when the code opens a menu, in order. They
+ * live on the server because menus change without notice and a change must be
+ * a row update, not an APK rollout.
+ */
+export type UssdExecutePayload = {
+  requestId: string
+  simSlot: number
+  command: string
+  steps: string[]
+}
+
+export type UssdResultPayload = {
+  requestId: string
+  status: 'success' | 'failed' | 'unsupported'
+  /** Verbatim text the network answered with, for parsing and for support. */
+  response?: string | null
+  errorCode?: string | null
+  errorMessage?: string | null
+}
+
 export type HeartbeatPayload = {
   battery?: number
   charging?: boolean

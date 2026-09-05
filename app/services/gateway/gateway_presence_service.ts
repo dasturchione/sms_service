@@ -16,6 +16,16 @@ import { GatewayStatus, SimState } from '#enums/gateway_status'
  * nodes can see the fleet. Writing every heartbeat straight through would mean
  * three writes per device per minute for a value nothing reads that often.
  */
+/**
+ * A device that has just been taken out of rotation, in the terms the alert
+ * needs: who owns it and what to call it.
+ */
+export type StaleGateway = {
+  uid: string
+  name: string | null
+  tenantId: number | null
+}
+
 export default class GatewayPresenceService {
   static async recordHeartbeat(
     connection: GatewayConnection,
@@ -73,18 +83,27 @@ export default class GatewayPresenceService {
    * silence is the only reliable signal. Anything that has gone quiet is taken
    * out of rotation and its in-flight work is freed by the lease sweep.
    */
-  static async markStaleGatewaysOffline(): Promise<number> {
+  static async markStaleGatewaysOffline(): Promise<StaleGateway[]> {
     const cutoff = DateTime.now()
       .minus({ seconds: gatewayConfig.presence.offlineAfterSeconds })
       .toSQL()!
 
-    const affected = await db
+    /**
+     * The affected rows are returned rather than counted, because whoever
+     * owns a device that just went quiet has to be told which one it was.
+     */
+    const rows = await db
       .from('gateways')
       .where('status', GatewayStatus.ONLINE)
       .where((builder) => builder.whereNull('last_seen_at').orWhere('last_seen_at', '<', cutoff))
       .update({ status: GatewayStatus.OFFLINE, node_id: null, updated_at: new Date() })
+      .returning(['uid', 'name', 'tenant_id'])
 
-    return Number(affected)
+    return (rows as Record<string, any>[]).map((row) => ({
+      uid: row.uid,
+      name: row.name ?? null,
+      tenantId: row.tenant_id === null ? null : Number(row.tenant_id),
+    }))
   }
 
   private static async applySimStates(

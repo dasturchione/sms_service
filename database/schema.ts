@@ -323,12 +323,16 @@ export class OperatorSchema extends BaseModel {
 }
 
 export class SimProfileSchema extends BaseModel {
-  static $columns = ['balanceCheckIntervalMin', 'balanceCheckedAt', 'counterDate', 'createdAt', 'dailyQuota', 'gatewayId', 'iccidHash', 'id', 'imsiHash', 'isActive', 'label', 'nextAvailableAt', 'operatorId', 'phoneNumber', 'sentToday', 'slot', 'smsBalance', 'smsPerMinute', 'state', 'uid', 'updatedAt'] as const
+  static $columns = ['balanceCheckIntervalMin', 'balanceCheckedAt', 'balanceCurrency', 'balanceFailures', 'counterDate', 'createdAt', 'dailyQuota', 'gatewayId', 'iccidHash', 'id', 'imsiHash', 'isActive', 'label', 'moneyBalance', 'nextAvailableAt', 'operatorId', 'phoneNumber', 'sentToday', 'slot', 'smsBalance', 'smsPerMinute', 'state', 'uid', 'updatedAt', 'ussdSupported'] as const
   $columns = SimProfileSchema.$columns
   @column()
   declare balanceCheckIntervalMin: number
   @column.dateTime()
   declare balanceCheckedAt: DateTime | null
+  @column()
+  declare balanceCurrency: string | null
+  @column()
+  declare balanceFailures: number
   @column.date()
   declare counterDate: DateTime | null
   @column.dateTime({ autoCreate: true })
@@ -347,6 +351,8 @@ export class SimProfileSchema extends BaseModel {
   declare isActive: boolean
   @column()
   declare label: string | null
+  @column()
+  declare moneyBalance: bigint | number | null
   @column.dateTime()
   declare nextAvailableAt: DateTime | null
   @column()
@@ -367,6 +373,8 @@ export class SimProfileSchema extends BaseModel {
   declare uid: string
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime | null
+  @column()
+  declare ussdSupported: boolean
 }
 
 export class SmsAttemptSchema extends BaseModel {

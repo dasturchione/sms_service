@@ -2,6 +2,7 @@ import logger from '@adonisjs/core/services/logger'
 import type GatewayConnection from '#realtime/gateway_connection'
 import SmsResultService from '#services/sms/sms_result_service'
 import GatewayPresenceService from '#services/gateway/gateway_presence_service'
+import UssdService from '#services/ussd/ussd_service'
 import {
   ClientEvent,
   ServerEvent,
@@ -10,6 +11,7 @@ import {
   type SmsAckPayload,
   type SmsDeliveredPayload,
   type SmsResultPayload,
+  type UssdResultPayload,
 } from '#realtime/protocol'
 
 /**
@@ -35,6 +37,10 @@ export default class MessageRouter {
 
         case ClientEvent.SMS_DELIVERED:
           await this.handleDelivered(connection, envelope)
+          break
+
+        case ClientEvent.USSD_RESULT:
+          await this.handleUssdResult(connection, envelope)
           break
 
         case ClientEvent.HEARTBEAT:
@@ -89,6 +95,23 @@ export default class MessageRouter {
      * a result survive a link that drops at exactly the wrong moment.
      */
     connection.send(ServerEvent.RESULT_ACK, { jobId: payload.jobId })
+  }
+
+  private static async handleUssdResult(
+    connection: GatewayConnection,
+    envelope: Envelope
+  ): Promise<void> {
+    const payload = envelope.data as UssdResultPayload
+    if (typeof payload?.requestId !== 'string') return
+    if (!['success', 'failed', 'unsupported'].includes(payload.status)) return
+
+    await UssdService.recordResult(connection.gatewayId, payload)
+
+    /**
+     * Acknowledged like an SMS result, so a device that loses the link mid
+     * report can resend without wondering whether we heard it.
+     */
+    connection.send(ServerEvent.RESULT_ACK, { requestId: payload.requestId })
   }
 
   private static async handleDelivered(

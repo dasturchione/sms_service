@@ -9,6 +9,7 @@ import type ApiClient from '#models/api_client'
 import type Tenant from '#models/tenant'
 import AuditService from '#services/audit/audit_service'
 import QueueSignal from '#services/infra/queue_signal'
+import WebhookService from '#services/webhooks/webhook_service'
 import { normalizePhoneNumber } from '#services/sms/phone_normalizer'
 import { encodeMessage } from '#services/sms/message_encoder'
 import { bodyForStorage, hashBody } from '#services/sms/body_policy'
@@ -18,6 +19,7 @@ import DomainException, {
 } from '#exceptions/domain_exception'
 import { ErrorCode } from '#enums/error_code'
 import { SmsEvent } from '#enums/sms_event'
+import { WebhookEvent } from '#enums/webhook_event'
 import { CANCELLABLE_SMS_STATUSES, SmsPriority, SmsStatus } from '#enums/sms_status'
 import { ActorType, AuditAction } from '#enums/audit_action'
 import { MAX_SEGMENTS } from '#validators/sms'
@@ -42,6 +44,14 @@ export type SendSmsResult = {
   message: SmsMessage
   /** True when an existing message was returned instead of creating one. */
   duplicate: boolean
+}
+
+export type BatchSendResult = {
+  index: number
+  accepted: boolean
+  duplicate?: boolean
+  message?: SmsMessage
+  error?: { code: string; message: string; details: Record<string, unknown> }
 }
 
 export type ListSmsFilters = {
@@ -186,6 +196,56 @@ export default class SmsService {
   }
 
   /**
+   * Accepts many messages in one request.
+   *
+   * Each entry is independent: one bad number does not reject the other
+   * ninety nine. The alternative — all or nothing — sounds tidier but is
+   * wrong for this domain, since a caller sending a campaign wants the
+   * ninety nine to go out and a list of the ones that did not.
+   */
+  static async sendBatch(
+    tenant: Tenant,
+    apiClient: ApiClient | null,
+    messages: SendSmsInput[],
+    options: { idempotencyKey?: string | null; ctx?: HttpContext } = {}
+  ): Promise<BatchSendResult[]> {
+    const results: BatchSendResult[] = []
+
+    for (const [index, input] of messages.entries()) {
+      try {
+        const { message, duplicate } = await this.send(tenant, apiClient, input, {
+          /**
+           * The batch key is per request, so each entry gets its own derived
+           * key. Without the index a retried batch would collapse into a
+           * single message.
+           */
+          idempotencyKey: options.idempotencyKey ? `${options.idempotencyKey}:${index}` : null,
+          ctx: options.ctx,
+        })
+
+        results.push({ index, accepted: true, duplicate, message })
+      } catch (error) {
+        /**
+         * A per entry failure is data, not an exception: it is reported in the
+         * response next to the entries that succeeded.
+         */
+        if (error instanceof DomainException) {
+          results.push({
+            index,
+            accepted: false,
+            error: { code: error.code, message: error.message, details: error.details },
+          })
+          continue
+        }
+
+        throw error
+      }
+    }
+
+    return results
+  }
+
+  /**
    * Reads one message. The tenant is part of the lookup rather than checked
    * afterwards, so a wrong tenant produces a plain 404 and leaks nothing about
    * whether the uid exists.
@@ -268,6 +328,8 @@ export default class SmsService {
       resourceId: message.uid,
       ctx: options.ctx,
     })
+
+    await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_CANCELLED)
 
     return message
   }

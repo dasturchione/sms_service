@@ -47,6 +47,30 @@ export const sendSmsValidator = vine.create({
   reference: vine.string().trim().maxLength(128).optional(),
 })
 
+/**
+ * Upper bound on one batch. Large enough that a campaign is a handful of
+ * calls, small enough that one request cannot hold a connection for minutes
+ * or blow through a client's whole per minute allowance in one go.
+ */
+export const MAX_BATCH_SIZE = 100
+
+export const sendSmsBatchValidator = vine.create({
+  messages: vine
+    .array(
+      vine.object({
+        to: vine.string().trim().minLength(4).maxLength(32),
+        message: vine.string().minLength(1).maxLength(MAX_BODY_LENGTH),
+        priority: priority().optional(),
+        operator: vine.string().trim().maxLength(32).optional(),
+        gatewayUid: vine.string().trim().maxLength(40).optional(),
+        expiresIn: vine.number().min(30).max(86400).optional(),
+        reference: vine.string().trim().maxLength(128).optional(),
+      })
+    )
+    .minLength(1)
+    .maxLength(MAX_BATCH_SIZE),
+})
+
 export const listSmsValidator = vine.create({
   status: vine.enum(Object.values(SmsStatus)).optional(),
   reference: vine.string().trim().maxLength(128).optional(),

@@ -6,6 +6,10 @@ import GatewayPresenceService from '#services/gateway/gateway_presence_service'
 import SmsDispatcher from '#services/sms/sms_dispatcher'
 import SmsResultService from '#services/sms/sms_result_service'
 import QueueSignal from '#services/infra/queue_signal'
+import AlertService from '#services/infra/alert_service'
+import UssdService from '#services/ussd/ussd_service'
+import BalanceScheduler from '#services/ussd/balance_scheduler'
+import ussdConfig from '#config/ussd'
 import connectionManager from '#realtime/connection_manager'
 import gatewayConfig from '#config/gateway'
 
@@ -21,6 +25,7 @@ export default class GatewayNode {
   private ws = new GatewayWebSocketServer()
   private stopListening: (() => Promise<void>) | null = null
   private sweepTimer: NodeJS.Timeout | null = null
+  private balanceTimer: NodeJS.Timeout | null = null
   private pollTimer: NodeJS.Timeout | null = null
 
   /**
@@ -59,6 +64,18 @@ export default class GatewayNode {
       this.sweep().catch((error) => logger.error({ err: error }, 'sweep failed'))
     }, gatewayConfig.dispatch.sweepIntervalMs)
     this.sweepTimer.unref()
+
+    /**
+     * Balance checking lives here rather than with the other periodic work
+     * because a USSD session needs a socket: it can only run on the process
+     * that actually holds the device.
+     */
+    this.balanceTimer = setInterval(() => {
+      BalanceScheduler.run().catch((error) =>
+        logger.error({ err: error }, 'balance scheduler failed')
+      )
+    }, ussdConfig.balance.intervalMs)
+    this.balanceTimer.unref()
 
     logger.info({ nodeId: gatewayConfig.nodeId }, 'gateway node started')
   }
@@ -113,10 +130,16 @@ export default class GatewayNode {
   private async sweep(): Promise<void> {
     const reclaimed = await SmsResultService.sweepExpiredLeases()
     const expired = await SmsResultService.sweepExpiredMessages()
+    await UssdService.sweepStaleRequests()
+
     const offline = await GatewayPresenceService.markStaleGatewaysOffline()
 
-    if (offline > 0) {
-      logger.warn({ offline }, 'gateways marked offline after missing heartbeats')
+    if (offline.length > 0) {
+      logger.warn({ offline: offline.length }, 'gateways marked offline after missing heartbeats')
+
+      for (const gateway of offline) {
+        await AlertService.gatewayOffline(gateway)
+      }
     }
 
     /**
@@ -131,6 +154,7 @@ export default class GatewayNode {
 
     if (this.pollTimer) clearInterval(this.pollTimer)
     if (this.sweepTimer) clearInterval(this.sweepTimer)
+    if (this.balanceTimer) clearInterval(this.balanceTimer)
     if (this.stopListening) await this.stopListening()
 
     await this.ws.shutdown()

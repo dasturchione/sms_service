@@ -6,7 +6,8 @@ import GatewayTransformer from '#transformers/gateway_transformer'
 import SimProfileTransformer from '#transformers/sim_profile_transformer'
 import AuditService from '#services/audit/audit_service'
 import connectionManager from '#realtime/connection_manager'
-import { ForbiddenException } from '#exceptions/domain_exception'
+import { ServerEvent } from '#realtime/protocol'
+import { updateGatewayValidator } from '#validators/admin'
 import { ActorType, AuditAction } from '#enums/audit_action'
 import { GatewayStatus } from '#enums/gateway_status'
 
@@ -53,6 +54,45 @@ export default class AdminGatewaysController {
   }
 
   /**
+   * Changes what an operator is allowed to decide about a device.
+   *
+   * Narrow on purpose: name, routing priority, concurrency and whether it is in
+   * service. Everything else is reported by the phone, and a field the panel
+   * could overwrite is a field that will eventually disagree with reality.
+   */
+  async update({ auth, params, request, serialize }: HttpContext) {
+    const user = auth.use('api').getUserOrFail()
+    const payload = await request.validateUsing(updateGatewayValidator)
+
+    const gateway = await GatewayService.findByUid(params.uid)
+
+    gateway.merge({
+      ...(payload.name === undefined ? {} : { name: payload.name }),
+      ...(payload.priority === undefined ? {} : { priority: payload.priority }),
+      ...(payload.maxInFlight === undefined ? {} : { maxInFlight: payload.maxInFlight }),
+      ...(payload.isActive === undefined ? {} : { isActive: payload.isActive }),
+    })
+
+    await gateway.save()
+
+    await GatewayService.logEvent(gateway, 'updated', { by: user.uid, ...payload }, 'info')
+
+    /**
+     * The device holds a copy of its own limits, so a change has to reach it
+     * or it would keep pacing itself by the old ones until it reconnected.
+     */
+    const connection = connectionManager.get(gateway.id)
+    if (connection) {
+      connection.send(ServerEvent.CONFIG_UPDATE, {
+        maxInFlight: gateway.maxInFlight,
+        isActive: gateway.isActive,
+      })
+    }
+
+    return serialize(GatewayTransformer.transform(gateway))
+  }
+
+  /**
    * Approves a device and returns a claim code.
    *
    * The code is shown exactly once, here. It is never stored in readable form
@@ -65,6 +105,69 @@ export default class AdminGatewaysController {
 
     const gateway = await GatewayService.findByUid(params.uid)
     const claimCode = await GatewayService.approve(gateway, user, request.ctx)
+
+    return serialize({
+      gateway: GatewayTransformer.transform(gateway),
+      claimCode,
+      expiresAt: gateway.claimCodeExpiresAt,
+    })
+  }
+
+  /**
+   * Issues a fresh claim code for a device that is already approved.
+   *
+   * The common case this exists for: a phone was approved, nobody typed the
+   * code in within its half hour, and the device now sits there permanently
+   * unable to connect. Approval is not the thing that expired — the code is —
+   * so re-approving is the whole fix, and it has its own route because
+   * "approve" is not what an operator is looking for at that moment.
+   *
+   * Issuing invalidates any previous code, which is why it is safe to press
+   * twice.
+   */
+  async issueClaimCode({ auth, params, request, serialize }: HttpContext) {
+    const user = this.assertPlatformOperator(auth)
+
+    const gateway = await GatewayService.findByUid(params.uid)
+    const claimCode = await GatewayService.approve(gateway, user, request.ctx)
+
+    return serialize({
+      gateway: GatewayTransformer.transform(gateway),
+      claimCode,
+      expiresAt: gateway.claimCodeExpiresAt,
+    })
+  }
+
+  /**
+   * Puts a disabled device back into service.
+   *
+   * Enabling alone would not be enough, and that is the whole reason this is
+   * its own action rather than a flag: disabling revoked the phone's token, so
+   * an "enabled" device with no credential would sit there looking healthy and
+   * never connect. The recovery is therefore enable *and* re-approve, in one
+   * step, returning a fresh claim code to type into the phone.
+   */
+  async enable({ auth, params, request, serialize }: HttpContext) {
+    const user = this.assertPlatformOperator(auth)
+
+    const gateway = await GatewayService.findByUid(params.uid)
+
+    gateway.merge({
+      isActive: true,
+
+      /**
+       * Offline rather than online: the device is allowed back, but nothing
+       * has heard from it yet, and claiming that it is online would put it
+       * straight into the routing pool.
+       */
+      status: GatewayStatus.OFFLINE,
+      nodeId: null,
+    })
+    await gateway.save()
+
+    const claimCode = await GatewayService.approve(gateway, user, request.ctx)
+
+    await GatewayService.logEvent(gateway, 'enabled', { by: user.uid }, 'info')
 
     return serialize({
       gateway: GatewayTransformer.transform(gateway),
@@ -106,13 +209,11 @@ export default class AdminGatewaysController {
     return serialize(GatewayTransformer.transform(gateway))
   }
 
+  /**
+   * The route group already proved this is staff; what is needed here is the
+   * user itself, for the audit trail.
+   */
   private assertPlatformOperator(auth: HttpContext['auth']) {
-    const user = auth.use('api').getUserOrFail()
-
-    if (!user.isPlatformOperator || !user.canAdminister) {
-      throw new ForbiddenException('Only platform operators may manage gateways')
-    }
-
-    return user
+    return auth.use('api').getUserOrFail()
   }
 }

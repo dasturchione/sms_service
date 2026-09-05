@@ -5,15 +5,34 @@
 
 /// <reference path="./manifest.d.ts" />
 import type { InferData, InferVariants } from '@adonisjs/core/types/transformers'
+import type ApiClientTransformer from '#transformers/api_client_transformer'
+import type AuditLogTransformer from '#transformers/audit_log_transformer'
 import type GatewayTransformer from '#transformers/gateway_transformer'
+import type OperatorTransformer from '#transformers/operator_transformer'
 import type SimProfileTransformer from '#transformers/sim_profile_transformer'
 import type SmsMessageTransformer from '#transformers/sms_message_transformer'
+import type TenantTransformer from '#transformers/tenant_transformer'
 import type UserTransformer from '#transformers/user_transformer'
+import type UssdCommandTransformer from '#transformers/ussd_command_transformer'
+import type UssdRequestTransformer from '#transformers/ussd_request_transformer'
+import type WebhookEndpointTransformer from '#transformers/webhook_endpoint_transformer'
 
 export namespace Data {
+  export type ApiClient = InferData<ApiClientTransformer>
+  export namespace ApiClient {
+    export type Variants = InferVariants<ApiClientTransformer>
+  }
+  export type AuditLog = InferData<AuditLogTransformer>
+  export namespace AuditLog {
+    export type Variants = InferVariants<AuditLogTransformer>
+  }
   export type Gateway = InferData<GatewayTransformer>
   export namespace Gateway {
     export type Variants = InferVariants<GatewayTransformer>
+  }
+  export type Operator = InferData<OperatorTransformer>
+  export namespace Operator {
+    export type Variants = InferVariants<OperatorTransformer>
   }
   export type SimProfile = InferData<SimProfileTransformer>
   export namespace SimProfile {
@@ -23,8 +42,24 @@ export namespace Data {
   export namespace SmsMessage {
     export type Variants = InferVariants<SmsMessageTransformer>
   }
+  export type Tenant = InferData<TenantTransformer>
+  export namespace Tenant {
+    export type Variants = InferVariants<TenantTransformer>
+  }
   export type User = InferData<UserTransformer>
   export namespace User {
     export type Variants = InferVariants<UserTransformer>
+  }
+  export type UssdCommand = InferData<UssdCommandTransformer>
+  export namespace UssdCommand {
+    export type Variants = InferVariants<UssdCommandTransformer>
+  }
+  export type UssdRequest = InferData<UssdRequestTransformer>
+  export namespace UssdRequest {
+    export type Variants = InferVariants<UssdRequestTransformer>
+  }
+  export type WebhookEndpoint = InferData<WebhookEndpointTransformer>
+  export namespace WebhookEndpoint {
+    export type Variants = InferVariants<WebhookEndpointTransformer>
   }
 }

@@ -6,11 +6,13 @@ import SmsMessage from '#models/sms_message'
 import SmsAttempt from '#models/sms_attempt'
 import SimProfile from '#models/sim_profile'
 import SmsService from '#services/sms/sms_service'
+import WebhookService from '#services/webhooks/webhook_service'
 import { decideRetry } from '#services/sms/retry_policy'
 import gatewayConfig from '#config/gateway'
 import { ErrorCode } from '#enums/error_code'
 import { SmsEvent } from '#enums/sms_event'
 import { isTerminalSmsStatus, SmsAttemptStatus, SmsStatus } from '#enums/sms_status'
+import { WebhookEvent } from '#enums/webhook_event'
 import type { SmsDeliveredPayload, SmsResultPayload } from '#realtime/protocol'
 
 /**
@@ -84,6 +86,7 @@ export default class SmsResultService {
       await message.useTransaction(trx).save()
 
       await SmsService.recordEvent(message, SmsEvent.DELIVERED, null, gatewayId, trx)
+      await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_DELIVERED, { client: trx })
     })
   }
 
@@ -168,6 +171,7 @@ export default class SmsResultService {
         await message.useTransaction(trx).save()
 
         await SmsService.recordEvent(message, SmsEvent.EXPIRED, null, null, trx)
+        await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_EXPIRED, { client: trx })
         expired++
       })
     }
@@ -211,6 +215,8 @@ export default class SmsResultService {
     if (message.simProfileId) {
       await this.countAgainstDailyQuota(message.simProfileId, trx)
     }
+
+    await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_SENT, { client: trx })
   }
 
   private static async applyFailure(
@@ -289,6 +295,13 @@ export default class SmsResultService {
       dispatchBody: null,
     })
     await message.useTransaction(trx).save()
+
+    /**
+     * Only the final failure is published. A retry is an implementation
+     * detail of ours, and telling a tenant about each one would make the
+     * event stream read as several failures for one message.
+     */
+    await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_FAILED, { client: trx })
   }
 
   /**
