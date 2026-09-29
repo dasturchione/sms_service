@@ -1,5 +1,10 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import { listSmsValidator, sendSmsBatchValidator, sendSmsValidator } from '#validators/sms'
+import {
+  listSmsValidator,
+  sendSmsBatchValidator,
+  sendSmsBulkValidator,
+  sendSmsValidator,
+} from '#validators/sms'
 import SmsService from '#services/sms/sms_service'
 import RateLimiter from '#services/infra/rate_limiter'
 import SmsMessageTransformer from '#transformers/sms_message_transformer'
@@ -75,6 +80,53 @@ export default class SmsController {
         error: result.error ?? null,
       })),
       meta: {
+        accepted: results.filter((result) => result.accepted).length,
+        rejected: results.filter((result) => !result.accepted).length,
+      },
+    })
+  }
+
+  /**
+   * Accepts many messages, each with its own number and text.
+   *
+   * The body may be the array itself or `{ "messages": [...] }`. Answers 202
+   * with a result per entry, in request order, like the batch endpoint.
+   */
+  async storeBulk({ request, response, tenant, apiClient, serialize }: HttpContext) {
+    const body = request.body() as unknown
+    const { messages } = await request.validateUsing(sendSmsBulkValidator, {
+      data: {
+        messages: Array.isArray(body) ? body : (body as { messages?: unknown })?.messages,
+      },
+    })
+    const idempotencyKey = request.header(IDEMPOTENCY_HEADER)?.slice(0, 128) ?? null
+
+    /**
+     * Weighed as a whole before anything is written, like a batch. Every
+     * entry counts, including ones later rejected: charging only for the
+     * valid ones would mean validating before the limit check, and a client
+     * over its limit should get a cheap answer.
+     */
+    await RateLimiter.consume(apiClient, messages.length)
+
+    const results = await SmsService.sendBulk(tenant, apiClient, messages, {
+      idempotencyKey,
+      ctx: request.ctx,
+    })
+
+    response.status(202)
+
+    return serialize.withoutWrapping({
+      data: results.map((result) => ({
+        index: result.index,
+        to: result.to,
+        accepted: result.accepted,
+        duplicate: result.duplicate,
+        message: result.message ? new SmsMessageTransformer(result.message).toObject() : null,
+        error: result.error ?? null,
+      })),
+      meta: {
+        requested: results.length,
         accepted: results.filter((result) => result.accepted).length,
         rejected: results.filter((result) => !result.accepted).length,
       },

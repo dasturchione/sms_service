@@ -22,6 +22,12 @@ export const ErrorCode = {
   BODY_UNAVAILABLE: 'BODY_UNAVAILABLE',
   CANCELLED_BY_CLIENT: 'CANCELLED_BY_CLIENT',
   ATTEMPTS_EXHAUSTED: 'ATTEMPTS_EXHAUSTED',
+  /**
+   * The same number appeared more than once in one bulk request. Only the
+   * first occurrence is sent: a campaign list with a repeated number is
+   * almost always a mistake, and the repeat would cost real money.
+   */
+  DUPLICATE_RECIPIENT: 'DUPLICATE_RECIPIENT',
 
   // Routing
   NO_GATEWAY_AVAILABLE: 'NO_GATEWAY_AVAILABLE',

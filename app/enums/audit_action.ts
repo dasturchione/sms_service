@@ -17,6 +17,11 @@ export const AuditAction = {
 
   // Messages
   SMS_CREATED: 'sms.created',
+  /**
+   * One entry per bulk request rather than one per recipient: a thousand
+   * identical audit rows would bury everything else in the log.
+   */
+  SMS_BULK_CREATED: 'sms.bulk_created',
   SMS_ASSIGNED: 'sms.assigned',
   SMS_SENT: 'sms.sent',
   SMS_FAILED: 'sms.failed',

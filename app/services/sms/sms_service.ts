@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon'
+import db from '@adonisjs/lucid/services/db'
 import type { HttpContext } from '@adonisjs/core/http'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import SmsMessage from '#models/sms_message'
@@ -10,7 +11,7 @@ import type Tenant from '#models/tenant'
 import AuditService from '#services/audit/audit_service'
 import QueueSignal from '#services/infra/queue_signal'
 import WebhookService from '#services/webhooks/webhook_service'
-import { normalizePhoneNumber } from '#services/sms/phone_normalizer'
+import { normalizePhoneNumber, tryNormalizePhoneNumber } from '#services/sms/phone_normalizer'
 import { encodeMessage } from '#services/sms/message_encoder'
 import { bodyForStorage, hashBody } from '#services/sms/body_policy'
 import DomainException, {
@@ -23,12 +24,20 @@ import { WebhookEvent } from '#enums/webhook_event'
 import { CANCELLABLE_SMS_STATUSES, SmsPriority, SmsStatus } from '#enums/sms_status'
 import { ActorType, AuditAction } from '#enums/audit_action'
 import { MAX_SEGMENTS } from '#validators/sms'
+import { generateUid } from '#utils/uid'
 
 /**
  * Postgres unique violation. Raised when two concurrent requests carry the
  * same idempotency key and both pass the pre-check.
  */
 const PG_UNIQUE_VIOLATION = '23505'
+
+/**
+ * Rows per multi-row INSERT. Postgres caps a statement at 65535 bind
+ * parameters; a message row has about twenty columns, so this stays far below
+ * the cap while keeping a thousand entry request to two statements.
+ */
+const BULK_INSERT_CHUNK = 500
 
 export type SendSmsInput = {
   to: string
@@ -52,6 +61,34 @@ export type BatchSendResult = {
   duplicate?: boolean
   message?: SmsMessage
   error?: { code: string; message: string; details: Record<string, unknown> }
+}
+
+export type BulkSendResult = {
+  /** Position in the request array, so the caller can map results back. */
+  index: number
+  /** The number exactly as the caller sent it, trimmed. */
+  to: string
+  accepted: boolean
+  duplicate: boolean
+  message?: SmsMessage
+  error?: { code: string; message: string; details: Record<string, unknown> }
+}
+
+/**
+ * An entry that passed validation and is about to be written, with every
+ * column that differs between entries already worked out.
+ */
+type PendingBulkEntry = {
+  index: number
+  to: string
+  e164: string
+  uid: string
+  idempotencyKey: string | null
+  input: SendSmsInput
+  encoded: ReturnType<typeof encodeMessage>
+  bodyHash: string
+  requestedOperatorId: number | null
+  requestedGatewayId: number | null
 }
 
 export type ListSmsFilters = {
@@ -87,14 +124,7 @@ export default class SmsService {
   ): Promise<SendSmsResult> {
     const recipient = normalizePhoneNumber(input.to)
     const encoded = encodeMessage(input.message)
-
-    if (encoded.segments > MAX_SEGMENTS) {
-      throw new DomainException(
-        ErrorCode.MESSAGE_TOO_LONG,
-        `The message would be split into ${encoded.segments} segments, the limit is ${MAX_SEGMENTS}`,
-        { status: 422, details: { segments: encoded.segments, encoding: encoded.encoding } }
-      )
-    }
+    this.assertSegments(encoded)
 
     const bodyHash = hashBody(input.message)
     const idempotencyKey = options.idempotencyKey ?? null
@@ -243,6 +273,349 @@ export default class SmsService {
     }
 
     return results
+  }
+
+  /**
+   * Accepts many messages, each with its own number and text, in one request.
+   *
+   * Same contract as `sendBatch` (every entry stands on its own, one bad entry
+   * never costs the others) but a different cost: `sendBatch` runs the full
+   * single send path per entry, several round trips each, while this
+   * validates everything in memory and writes all accepted messages with a
+   * few multi-row inserts in one transaction.
+   *
+   * The transaction makes acceptance all or nothing for the valid entries, so
+   * the caller never ends up with half its list queued and no response saying
+   * which half.
+   */
+  static async sendBulk(
+    tenant: Tenant,
+    apiClient: ApiClient | null,
+    messages: SendSmsInput[],
+    options: { idempotencyKey?: string | null; ctx?: HttpContext } = {}
+  ): Promise<BulkSendResult[]> {
+    const results: BulkSendResult[] = []
+    const pending: PendingBulkEntry[] = []
+    const firstIndexByContent = new Map<string, number>()
+
+    /**
+     * A campaign usually names one operator or gateway, if any, for all of
+     * its entries. Each distinct value is looked up once, not once per entry.
+     */
+    const operators = new Map<string, Promise<Operator | null>>()
+    const gateways = new Map<string, Promise<Gateway | null>>()
+
+    for (const [index, input] of messages.entries()) {
+      const to = input.to.trim()
+      const reject = (code: string, message: string, details: Record<string, unknown> = {}) => {
+        results[index] = this.rejectedEntry(index, to, code, { message, details })
+      }
+
+      const recipient = tryNormalizePhoneNumber(to)
+      if (!recipient) {
+        reject(ErrorCode.INVALID_NUMBER, 'The recipient number is not a valid phone number', {
+          recipient: to,
+        })
+        continue
+      }
+
+      const encoded = encodeMessage(input.message)
+      if (encoded.segments > MAX_SEGMENTS) {
+        reject(
+          ErrorCode.MESSAGE_TOO_LONG,
+          `The message would be split into ${encoded.segments} segments, the limit is ${MAX_SEGMENTS}`,
+          { segments: encoded.segments, encoding: encoded.encoding }
+        )
+        continue
+      }
+
+      const bodyHash = hashBody(input.message)
+
+      /**
+       * Only the same number with the same text is a duplicate. One customer
+       * may legitimately get two different reminders in one request; the
+       * same text twice is a mistake that costs real money.
+       */
+      const contentKey = `${recipient.e164}:${bodyHash}`
+      const firstIndex = firstIndexByContent.get(contentKey)
+      if (firstIndex !== undefined) {
+        reject(
+          ErrorCode.DUPLICATE_RECIPIENT,
+          'The same message to this number already appears earlier in the request',
+          { firstIndex }
+        )
+        continue
+      }
+
+      let requestedOperatorId: number | null = null
+      if (input.operator) {
+        const code = input.operator.toLowerCase()
+        if (!operators.has(code)) {
+          operators.set(code, Operator.query().where('code', code).first())
+        }
+        const operator = await operators.get(code)!
+        if (!operator) {
+          reject(ErrorCode.OPERATOR_NOT_FOUND, `Unknown operator "${input.operator}"`)
+          continue
+        }
+        requestedOperatorId = operator.id
+      }
+
+      let requestedGatewayId: number | null = null
+      if (input.gatewayUid) {
+        if (!gateways.has(input.gatewayUid)) {
+          gateways.set(
+            input.gatewayUid,
+            Gateway.query()
+              .where('uid', input.gatewayUid)
+              .where((builder) => builder.whereNull('tenant_id').orWhere('tenant_id', tenant.id))
+              .first()
+          )
+        }
+        const gateway = await gateways.get(input.gatewayUid)!
+        if (!gateway) {
+          reject(ErrorCode.GATEWAY_NOT_FOUND, `Unknown gateway "${input.gatewayUid}"`)
+          continue
+        }
+        requestedGatewayId = gateway.id
+      }
+
+      firstIndexByContent.set(contentKey, index)
+
+      pending.push({
+        index,
+        to,
+        e164: recipient.e164,
+        uid: generateUid('sms'),
+        /**
+         * Derived per entry exactly like `sendBatch`, so a retried request
+         * maps onto the messages the first one created.
+         */
+        idempotencyKey: options.idempotencyKey ? `${options.idempotencyKey}:${index}` : null,
+        input,
+        encoded,
+        bodyHash,
+        requestedOperatorId,
+        requestedGatewayId,
+      })
+    }
+
+    let written: PendingBulkEntry[] = []
+
+    /**
+     * One retry covers the race where a concurrent replay of the same request
+     * commits first: the second pass finds those rows in the idempotency check
+     * and returns them instead of failing.
+     */
+    for (let pass = 0; ; pass++) {
+      const remaining = await this.resolveBulkReplays(tenant.id, pending, results)
+
+      try {
+        const created = await this.insertBulk(tenant, apiClient, remaining)
+
+        const byUid = new Map(created.map((message) => [message.uid, message]))
+        for (const entry of remaining) {
+          results[entry.index] = {
+            index: entry.index,
+            to: entry.to,
+            accepted: true,
+            duplicate: false,
+            message: byUid.get(entry.uid),
+          }
+        }
+
+        written = remaining
+        break
+      } catch (error) {
+        if (pass === 0 && options.idempotencyKey && this.isUniqueViolation(error)) continue
+        throw error
+      }
+    }
+
+    if (written.length > 0) {
+      await AuditService.record({
+        action: AuditAction.SMS_BULK_CREATED,
+        actor: apiClient
+          ? { type: ActorType.API_CLIENT, id: apiClient.id, label: apiClient.clientId }
+          : { type: ActorType.SYSTEM },
+        tenantId: tenant.id,
+        resourceType: 'sms_bulk',
+        metadata: {
+          requested: messages.length,
+          accepted: written.length,
+          segments: written.reduce((total, entry) => total + entry.encoded.segments, 0),
+        },
+        ctx: options.ctx,
+      })
+
+      /**
+       * One nudge for the whole request. The dispatcher drains the queue in a
+       * loop, so a notification per message would only wake it again for
+       * work it is already doing.
+       */
+      await QueueSignal.notify()
+    }
+
+    return results
+  }
+
+  /**
+   * Fills in the result for entries whose idempotency key was already used
+   * and returns the ones that still need writing. One query for the whole
+   * request rather than one per entry.
+   */
+  private static async resolveBulkReplays(
+    tenantId: number,
+    pending: PendingBulkEntry[],
+    results: BulkSendResult[]
+  ): Promise<PendingBulkEntry[]> {
+    const keys = pending
+      .map((entry) => entry.idempotencyKey)
+      .filter((key): key is string => key !== null)
+
+    if (keys.length === 0) return pending
+
+    const existing = await SmsMessage.query()
+      .where('tenant_id', tenantId)
+      .whereIn('idempotency_key', keys)
+
+    if (existing.length === 0) return pending
+
+    const byKey = new Map(existing.map((message) => [message.idempotencyKey, message]))
+
+    return pending.filter((entry) => {
+      const found = byKey.get(entry.idempotencyKey)
+      if (!found) return true
+
+      if (found.recipientNormalized !== entry.e164 || found.bodyHash !== entry.bodyHash) {
+        results[entry.index] = this.rejectedEntry(
+          entry.index,
+          entry.to,
+          ErrorCode.IDEMPOTENCY_CONFLICT,
+          {
+            message: 'Idempotency key was already used with a different payload',
+            details: { idempotencyKey: entry.idempotencyKey },
+          }
+        )
+      } else {
+        results[entry.index] = {
+          index: entry.index,
+          to: entry.to,
+          accepted: true,
+          duplicate: true,
+          message: found,
+        }
+      }
+
+      return false
+    })
+  }
+
+  /**
+   * Writes the messages and their first two timeline events in one
+   * transaction, then reads the rows back so the response has the same shape
+   * as a read of the same message, database defaults included.
+   */
+  private static async insertBulk(
+    tenant: Tenant,
+    apiClient: ApiClient | null,
+    entries: PendingBulkEntry[]
+  ): Promise<SmsMessage[]> {
+    if (entries.length === 0) return []
+
+    const settings = tenant.resolvedSettings
+    const now = DateTime.now()
+    const nowSql = now.toJSDate()
+
+    const rows = entries.map((entry) => {
+      const expiresInSeconds = entry.input.expiresIn ?? settings.defaultExpiresInSeconds
+      const priorityName = (entry.input.priority ?? 'normal').toUpperCase() as
+        'HIGH' | 'NORMAL' | 'LOW'
+
+      return {
+        uid: entry.uid,
+        tenant_id: tenant.id,
+        api_client_id: apiClient?.id ?? null,
+        idempotency_key: entry.idempotencyKey,
+        reference: entry.input.reference ?? null,
+        recipient: entry.to,
+        recipient_normalized: entry.e164,
+        message_body: bodyForStorage(entry.input.message, settings),
+        /**
+         * Erased once the message settles; see the `dispatch_body` migration.
+         */
+        dispatch_body: entry.input.message,
+        body_hash: entry.bodyHash,
+        segments: entry.encoded.segments,
+        encoding: entry.encoded.encoding,
+        status: SmsStatus.QUEUED,
+        priority: SmsPriority[priorityName],
+        attempts: 0,
+        max_attempts: settings.defaultMaxAttempts,
+        requested_operator_id: entry.requestedOperatorId,
+        requested_gateway_id: entry.requestedGatewayId,
+        expires_at:
+          expiresInSeconds > 0 ? now.plus({ seconds: expiresInSeconds }).toJSDate() : null,
+        queued_at: nowSql,
+        created_at: nowSql,
+        updated_at: nowSql,
+      }
+    })
+
+    return db.transaction(async (trx) => {
+      const ids: (string | number)[] = []
+
+      for (const chunk of chunked(rows, BULK_INSERT_CHUNK)) {
+        const inserted: { id: string | number }[] = await trx
+          .insertQuery()
+          .table('sms_messages')
+          .multiInsert(chunk)
+          .returning('id')
+
+        ids.push(...inserted.map((row) => row.id))
+      }
+
+      const events = ids.flatMap((id) =>
+        [SmsEvent.CREATED, SmsEvent.QUEUED].map((event) => ({
+          sms_message_id: id,
+          event,
+          gateway_id: null,
+          payload: null,
+          created_at: nowSql,
+        }))
+      )
+
+      for (const chunk of chunked(events, BULK_INSERT_CHUNK)) {
+        await trx.insertQuery().table('sms_events').multiInsert(chunk)
+      }
+
+      return SmsMessage.query({ client: trx }).whereIn('id', ids)
+    })
+  }
+
+  private static rejectedEntry(
+    index: number,
+    to: string,
+    code: string,
+    error: { message: string; details?: Record<string, unknown> }
+  ): BulkSendResult {
+    return {
+      index,
+      to,
+      accepted: false,
+      duplicate: false,
+      error: { code, message: error.message, details: error.details ?? {} },
+    }
+  }
+
+  private static assertSegments(encoded: ReturnType<typeof encodeMessage>): void {
+    if (encoded.segments > MAX_SEGMENTS) {
+      throw new DomainException(
+        ErrorCode.MESSAGE_TOO_LONG,
+        `The message would be split into ${encoded.segments} segments, the limit is ${MAX_SEGMENTS}`,
+        { status: 422, details: { segments: encoded.segments, encoding: encoded.encoding } }
+      )
+    }
   }
 
   /**
@@ -422,4 +795,12 @@ export default class SmsService {
       (error as { code?: string }).code === PG_UNIQUE_VIOLATION
     )
   }
+}
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let start = 0; start < items.length; start += size) {
+    chunks.push(items.slice(start, start + size))
+  }
+  return chunks
 }

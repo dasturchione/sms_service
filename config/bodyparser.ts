@@ -33,6 +33,13 @@ const bodyParserConfig = defineConfig({
     convertEmptyStringsToNull: true,
 
     /**
+     * Sized for `POST /sms/bulk`: a thousand entries of long Cyrillic text
+     * (two bytes per character in UTF-8) is about 3.5 MB. The 1 MB default
+     * would refuse a legitimate full request with a bare 413.
+     */
+    limit: '4mb',
+
+    /**
      * Content types handled by the JSON parser.
      */
     types: [

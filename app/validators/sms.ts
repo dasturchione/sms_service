@@ -71,6 +71,38 @@ export const sendSmsBatchValidator = vine.create({
     .maxLength(MAX_BATCH_SIZE),
 })
 
+/**
+ * Upper bound on one bulk request. Ten times the batch limit because a bulk
+ * request is written with a handful of multi-row inserts, not one round trip
+ * per entry.
+ */
+export const MAX_BULK_SIZE = 1000
+
+/**
+ * Many messages, each with its own number and its own text, e.g. a debt
+ * reminder that names a different shop and amount for every customer.
+ *
+ * The body is either the array itself or `{ "messages": [...] }`, the same
+ * envelope `/sms/batch` uses. The controller hands the array over under the
+ * `messages` key in both cases.
+ */
+export const sendSmsBulkValidator = vine.create({
+  messages: vine
+    .array(
+      vine.object({
+        to: vine.string().trim().minLength(4).maxLength(32),
+        message: vine.string().minLength(1).maxLength(MAX_BODY_LENGTH),
+        priority: priority().optional(),
+        operator: vine.string().trim().maxLength(32).optional(),
+        gatewayUid: vine.string().trim().maxLength(40).optional(),
+        expiresIn: vine.number().min(30).max(86400).optional(),
+        reference: vine.string().trim().maxLength(128).optional(),
+      })
+    )
+    .minLength(1)
+    .maxLength(MAX_BULK_SIZE),
+})
+
 export const listSmsValidator = vine.create({
   status: vine.enum(Object.values(SmsStatus)).optional(),
   reference: vine.string().trim().maxLength(128).optional(),

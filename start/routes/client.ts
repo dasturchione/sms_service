@@ -34,6 +34,15 @@ router
           .as('sms.batch')
           .use(middleware.abilities([ClientAbility.SMS_SEND]))
 
+        /**
+         * Many messages, each with its own number and text, written in one
+         * transaction. The fast path for campaigns and reminders.
+         */
+        router
+          .post('bulk', [controllers.sms.Sms, 'storeBulk'])
+          .as('sms.bulk')
+          .use(middleware.abilities([ClientAbility.SMS_SEND]))
+
         router
           .get('/', [controllers.sms.Sms, 'index'])
           .as('sms.index')
