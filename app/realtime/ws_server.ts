@@ -154,6 +154,23 @@ export default class GatewayWebSocketServer {
     const wasCurrent = connectionManager.remove(connection)
 
     /**
+     * A socket superseded by a newer one from the same device. Only its own
+     * session row is closed: the device is still connected through the new
+     * socket, and touching the gateway here would mark it offline under a
+     * live connection. That is what once held a whole evening's messages in
+     * the queue until the app was restarted the next morning.
+     */
+    if (!wasCurrent) {
+      await GatewayService.closeSession(connection.sessionId, reason)
+
+      logger.info(
+        { gatewayUid: connection.gatewayUid, reason, replaced: true },
+        'gateway disconnected'
+      )
+      return
+    }
+
+    /**
      * Persist the last telemetry we saw before the session ends, otherwise the
      * final twenty seconds of a device's life are lost.
      */
@@ -165,7 +182,7 @@ export default class GatewayWebSocketServer {
     })
 
     logger.info(
-      { gatewayUid: connection.gatewayUid, reason, replaced: !wasCurrent },
+      { gatewayUid: connection.gatewayUid, reason, replaced: false },
       'gateway disconnected'
     )
   }

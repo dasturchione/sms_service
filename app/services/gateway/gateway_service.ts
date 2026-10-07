@@ -239,12 +239,7 @@ export default class GatewayService {
     sessionId: number,
     options: { nodeId: string; reason: string }
   ): Promise<void> {
-    const now = DateTime.now()
-
-    await GatewaySession.query()
-      .where('id', sessionId)
-      .whereNull('disconnected_at')
-      .update({ disconnected_at: now.toSQL(), disconnect_reason: options.reason.slice(0, 64) })
+    await this.closeSession(sessionId, options.reason)
 
     const gateway = await Gateway.find(gatewayId)
     if (!gateway) return
@@ -263,6 +258,17 @@ export default class GatewayService {
       resourceId: gateway.uid,
       metadata: { reason: options.reason },
     })
+  }
+
+  /**
+   * Ends one session row without touching the gateway. Used on its own for a
+   * socket that a newer connection from the same device replaced.
+   */
+  static async closeSession(sessionId: number, reason: string): Promise<void> {
+    await GatewaySession.query()
+      .where('id', sessionId)
+      .whereNull('disconnected_at')
+      .update({ disconnected_at: DateTime.now().toSQL(), disconnect_reason: reason.slice(0, 64) })
   }
 
   /**

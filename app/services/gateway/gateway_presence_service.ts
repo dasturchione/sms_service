@@ -1,9 +1,11 @@
 import { DateTime } from 'luxon'
 import db from '@adonisjs/lucid/services/db'
+import logger from '@adonisjs/core/services/logger'
 import Gateway from '#models/gateway'
 import SimProfile from '#models/sim_profile'
 import GatewayService from '#services/gateway/gateway_service'
 import gatewayConfig from '#config/gateway'
+import connectionManager from '#realtime/connection_manager'
 import type GatewayConnection from '#realtime/gateway_connection'
 import type { HeartbeatPayload } from '#realtime/protocol'
 import { GatewayStatus, SimState } from '#enums/gateway_status'
@@ -49,6 +51,39 @@ export default class GatewayPresenceService {
     if (sincePersist < gatewayConfig.presence.persistEverySeconds) return
 
     await this.flush(connection)
+    await this.reassertOnline(connection)
+  }
+
+  /**
+   * Restores a gateway recorded as offline while its current socket is
+   * demonstrably alive.
+   *
+   * The dispatcher only routes to gateways recorded as online, so a stray
+   * offline mark under a live connection silently stops all traffic until
+   * the next reconnect, which on a quiet night may be many hours away. A
+   * heartbeat on the current socket is proof of life, so it corrects that
+   * instead of waiting. Only `offline` is restored: a disabled or pending
+   * device must stay that way whatever its socket says.
+   */
+  private static async reassertOnline(connection: GatewayConnection): Promise<void> {
+    if (connectionManager.get(connection.gatewayId) !== connection) return
+
+    const restored = await db
+      .from('gateways')
+      .where('id', connection.gatewayId)
+      .where('status', GatewayStatus.OFFLINE)
+      .update({
+        status: GatewayStatus.ONLINE,
+        node_id: gatewayConfig.nodeId,
+        updated_at: new Date(),
+      })
+
+    if (Number(restored) > 0 || (Array.isArray(restored) && restored.length > 0)) {
+      logger.warn(
+        { gatewayUid: connection.gatewayUid },
+        'gateway was recorded offline under a live connection; restored'
+      )
+    }
   }
 
   /**
