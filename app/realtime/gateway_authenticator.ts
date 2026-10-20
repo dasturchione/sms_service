@@ -38,16 +38,13 @@ export default class GatewayAuthenticator {
     }
 
     /**
-     * Approval and activation are re-checked on every connection rather than
-     * only at claim time, so revoking a device takes effect on its next
-     * reconnect without having to hunt down its token.
+     * Re-checked on every connection rather than once, so disabling a device
+     * takes effect on its next reconnect. Disabling keeps the token, which is
+     * what lets an operator enable the phone again without touching it; this
+     * check is what makes the token useless in between.
      */
     if (!gateway.isActive || gateway.status === GatewayStatus.DISABLED) {
       return { ok: false, code: 4403, reason: 'device disabled' }
-    }
-
-    if (!gateway.isApproved) {
-      return { ok: false, code: 4403, reason: 'device not approved' }
     }
 
     gateway.currentAccessToken = accessToken

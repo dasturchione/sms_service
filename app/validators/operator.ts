@@ -45,6 +45,12 @@ export const createOperatorValidator = vine.create({
     .optional(),
   phonePrefixes: phonePrefixes().optional(),
   isActive: vine.boolean().optional(),
+
+  /**
+   * Distinct recipients a SIM on this tariff may reach per day. Null means
+   * the tariff has no cap.
+   */
+  dailyRecipientLimit: vine.number().withoutDecimals().min(1).max(100_000).nullable().optional(),
 })
 
 export const updateOperatorValidator = vine.create({
@@ -62,6 +68,7 @@ export const updateOperatorValidator = vine.create({
     .optional(),
   phonePrefixes: phonePrefixes().optional(),
   isActive: vine.boolean().optional(),
+  dailyRecipientLimit: vine.number().withoutDecimals().min(1).max(100_000).nullable().optional(),
 })
 
 /**

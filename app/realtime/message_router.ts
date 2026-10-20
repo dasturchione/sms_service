@@ -93,8 +93,13 @@ export default class MessageRouter {
      * The device keeps a result in its local outbox until this acknowledgement
      * arrives, and resends it after a reconnect otherwise. That is what makes
      * a result survive a link that drops at exactly the wrong moment.
+     *
+     * The acknowledgement names the kind of result it confirms. A device that
+     * cleared everything for the job on any acknowledgement would delete a
+     * delivery report still waiting to be sent, and the message would stay at
+     * `sent` for good.
      */
-    connection.send(ServerEvent.RESULT_ACK, { jobId: payload.jobId })
+    connection.send(ServerEvent.RESULT_ACK, { jobId: payload.jobId, event: ClientEvent.SMS_RESULT })
   }
 
   private static async handleUssdResult(
@@ -122,6 +127,9 @@ export default class MessageRouter {
     if (typeof payload?.jobId !== 'string') return
 
     await SmsResultService.recordDelivered(connection.gatewayId, payload)
-    connection.send(ServerEvent.RESULT_ACK, { jobId: payload.jobId })
+    connection.send(ServerEvent.RESULT_ACK, {
+      jobId: payload.jobId,
+      event: ClientEvent.SMS_DELIVERED,
+    })
   }
 }

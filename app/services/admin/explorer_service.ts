@@ -6,6 +6,7 @@ import SmsAttempt from '#models/sms_attempt'
 import AuditLog from '#models/audit_log'
 import Tenant from '#models/tenant'
 import Gateway from '#models/gateway'
+import SimProfile from '#models/sim_profile'
 import { NotFoundException } from '#exceptions/domain_exception'
 import { normalizePhoneNumber } from '#services/sms/phone_normalizer'
 import type { SmsStatus } from '#enums/sms_status'
@@ -16,6 +17,7 @@ export type MessageFilters = {
   recipient?: string
   reference?: string
   gateway?: string
+  sim?: string
   from?: DateTime
   to?: DateTime
   limit?: number
@@ -65,6 +67,13 @@ export default class ExplorerService {
         'sim_profile_id',
         db.from('sim_profiles').select('id').where('gateway_id', gateway.id)
       )
+    }
+
+    if (filters.sim) {
+      const sim = await SimProfile.query().where('uid', filters.sim).first()
+      if (!sim) throw new NotFoundException('SIM', filters.sim)
+
+      query.where('sim_profile_id', sim.id)
     }
 
     if (filters.status) query.where('status', filters.status)

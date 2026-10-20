@@ -1,31 +1,36 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import Gateway from '#models/gateway'
 import SimProfile from '#models/sim_profile'
+import Tenant from '#models/tenant'
 import GatewayService from '#services/gateway/gateway_service'
+import GatewayAssignmentService from '#services/gateway/gateway_assignment'
 import GatewayTransformer from '#transformers/gateway_transformer'
 import SimProfileTransformer from '#transformers/sim_profile_transformer'
 import AuditService from '#services/audit/audit_service'
 import connectionManager from '#realtime/connection_manager'
 import { ServerEvent } from '#realtime/protocol'
 import { updateGatewayValidator } from '#validators/admin'
+import { NotFoundException } from '#exceptions/domain_exception'
 import { ActorType, AuditAction } from '#enums/audit_action'
-import { GatewayStatus } from '#enums/gateway_status'
+import { GatewayAssignment, GatewayStatus } from '#enums/gateway_status'
+import type User from '#models/user'
 
 /**
  * Fleet management for platform operators.
  *
- * Approving a device is the one action that turns an unknown phone into
- * infrastructure that can spend a tenant's money, so it is restricted to
- * platform operators rather than tenant administrators.
+ * Devices register and connect on their own; nothing here approves them.
+ * What an operator decides is what a device is for: the shared pool, a
+ * particular tenant, or nothing yet.
  */
 export default class AdminGatewaysController {
-  async index({ auth, request, serialize }: HttpContext) {
-    this.assertPlatformOperator(auth)
-
+  async index({ request, serialize }: HttpContext) {
     const status = request.input('status')
-    const query = Gateway.query().orderBy('id', 'desc').limit(200)
+    const assignment = request.input('assignment')
+
+    const query = Gateway.query().preload('tenant').orderBy('id', 'desc').limit(200)
 
     if (status) query.where('status', status)
+    if (assignment) query.where('assignment', assignment)
 
     const gateways = await query
 
@@ -41,10 +46,8 @@ export default class AdminGatewaysController {
     })
   }
 
-  async show({ auth, params, serialize }: HttpContext) {
-    this.assertPlatformOperator(auth)
-
-    const gateway = await GatewayService.findByUid(params.uid)
+  async show({ params, serialize }: HttpContext) {
+    const gateway = await this.find(params.uid)
     const profiles = await SimProfile.query().where('gateway_id', gateway.id).orderBy('slot', 'asc')
 
     return serialize({
@@ -54,17 +57,18 @@ export default class AdminGatewaysController {
   }
 
   /**
-   * Changes what an operator is allowed to decide about a device.
+   * Changes what an operator is allowed to decide about a device: its name,
+   * routing priority, concurrency, whether it is in service, and what it is
+   * for.
    *
-   * Narrow on purpose: name, routing priority, concurrency and whether it is in
-   * service. Everything else is reported by the phone, and a field the panel
-   * could overwrite is a field that will eventually disagree with reality.
+   * Everything else is reported by the phone, and a field the panel could
+   * overwrite is a field that will eventually disagree with reality.
    */
   async update({ auth, params, request, serialize }: HttpContext) {
     const user = auth.use('api').getUserOrFail()
     const payload = await request.validateUsing(updateGatewayValidator)
 
-    const gateway = await GatewayService.findByUid(params.uid)
+    const gateway = await this.find(params.uid)
 
     gateway.merge({
       ...(payload.name === undefined ? {} : { name: payload.name }),
@@ -72,85 +76,47 @@ export default class AdminGatewaysController {
       ...(payload.maxInFlight === undefined ? {} : { maxInFlight: payload.maxInFlight }),
       ...(payload.isActive === undefined ? {} : { isActive: payload.isActive }),
     })
-
     await gateway.save()
 
-    await GatewayService.logEvent(gateway, 'updated', { by: user.uid, ...payload }, 'info')
+    await GatewayService.logEvent(
+      gateway,
+      'updated',
+      { by: user.uid, ...payload, tenant: payload.tenant ?? undefined },
+      'info'
+    )
 
-    /**
-     * The device holds a copy of its own limits, so a change has to reach it
-     * or it would keep pacing itself by the old ones until it reconnected.
-     */
-    const connection = connectionManager.get(gateway.id)
-    if (connection) {
-      connection.send(ServerEvent.CONFIG_UPDATE, {
+    if (payload.assignment !== undefined) {
+      const tenant = await this.resolveTenant(payload.assignment, payload.tenant)
+
+      await GatewayAssignmentService.assign(gateway, payload.assignment, tenant, {
+        actor: this.actor(user),
+        ctx: request.ctx,
+      })
+    } else {
+      /**
+       * The device holds a copy of its own limits, so a change has to reach
+       * it or it would keep pacing itself by the old ones until it
+       * reconnected.
+       */
+      connectionManager.get(gateway.id)?.send(ServerEvent.CONFIG_UPDATE, {
         maxInFlight: gateway.maxInFlight,
         isActive: gateway.isActive,
       })
     }
 
+    await gateway.load('tenant')
     return serialize(GatewayTransformer.transform(gateway))
-  }
-
-  /**
-   * Approves a device and returns a claim code.
-   *
-   * The code is shown exactly once, here. It is never stored in readable form
-   * and never sent to the device: the device asks for it by typing it in, so a
-   * code that leaks from a log or a screenshot is worth nothing after its
-   * short lifetime.
-   */
-  async approve({ auth, params, request, serialize }: HttpContext) {
-    const user = this.assertPlatformOperator(auth)
-
-    const gateway = await GatewayService.findByUid(params.uid)
-    const claimCode = await GatewayService.approve(gateway, user, request.ctx)
-
-    return serialize({
-      gateway: GatewayTransformer.transform(gateway),
-      claimCode,
-      expiresAt: gateway.claimCodeExpiresAt,
-    })
-  }
-
-  /**
-   * Issues a fresh claim code for a device that is already approved.
-   *
-   * The common case this exists for: a phone was approved, nobody typed the
-   * code in within its half hour, and the device now sits there permanently
-   * unable to connect. Approval is not the thing that expired — the code is —
-   * so re-approving is the whole fix, and it has its own route because
-   * "approve" is not what an operator is looking for at that moment.
-   *
-   * Issuing invalidates any previous code, which is why it is safe to press
-   * twice.
-   */
-  async issueClaimCode({ auth, params, request, serialize }: HttpContext) {
-    const user = this.assertPlatformOperator(auth)
-
-    const gateway = await GatewayService.findByUid(params.uid)
-    const claimCode = await GatewayService.approve(gateway, user, request.ctx)
-
-    return serialize({
-      gateway: GatewayTransformer.transform(gateway),
-      claimCode,
-      expiresAt: gateway.claimCodeExpiresAt,
-    })
   }
 
   /**
    * Puts a disabled device back into service.
    *
-   * Enabling alone would not be enough, and that is the whole reason this is
-   * its own action rather than a flag: disabling revoked the phone's token, so
-   * an "enabled" device with no credential would sit there looking healthy and
-   * never connect. The recovery is therefore enable *and* re-approve, in one
-   * step, returning a fresh claim code to type into the phone.
+   * Disabling kept the phone's token, so nothing has to be done on the phone:
+   * it is already retrying, and it gets back in on its next attempt.
    */
   async enable({ auth, params, request, serialize }: HttpContext) {
-    const user = this.assertPlatformOperator(auth)
-
-    const gateway = await GatewayService.findByUid(params.uid)
+    const user = auth.use('api').getUserOrFail()
+    const gateway = await this.find(params.uid)
 
     gateway.merge({
       isActive: true,
@@ -158,49 +124,18 @@ export default class AdminGatewaysController {
       /**
        * Offline rather than online: the device is allowed back, but nothing
        * has heard from it yet, and claiming that it is online would put it
-       * straight into the routing pool.
+       * straight into routing.
        */
       status: GatewayStatus.OFFLINE,
       nodeId: null,
     })
     await gateway.save()
 
-    const claimCode = await GatewayService.approve(gateway, user, request.ctx)
-
     await GatewayService.logEvent(gateway, 'enabled', { by: user.uid }, 'info')
-
-    return serialize({
-      gateway: GatewayTransformer.transform(gateway),
-      claimCode,
-      expiresAt: gateway.claimCodeExpiresAt,
-    })
-  }
-
-  /**
-   * Takes a device out of service and revokes its credentials.
-   *
-   * Both halves matter: disabling without revoking would leave a working token
-   * on a phone that may be lost or stolen.
-   */
-  async disable({ auth, params, request, serialize }: HttpContext) {
-    const user = this.assertPlatformOperator(auth)
-
-    const gateway = await GatewayService.findByUid(params.uid)
-
-    gateway.merge({ isActive: false, status: GatewayStatus.DISABLED, nodeId: null })
-    await gateway.save()
-
-    const tokens = await Gateway.accessTokens.all(gateway)
-    for (const token of tokens) {
-      await Gateway.accessTokens.delete(gateway, token.identifier)
-    }
-
-    connectionManager.get(gateway.id)?.close('device disabled')
-
-    await GatewayService.logEvent(gateway, 'disabled', { by: user.uid }, 'warning')
     await AuditService.record({
-      action: AuditAction.GATEWAY_DISABLED,
-      actor: { type: ActorType.USER, id: user.id, label: user.email },
+      action: AuditAction.GATEWAY_ENABLED,
+      actor: this.actor(user),
+      tenantId: gateway.tenantId,
       resourceType: 'gateway',
       resourceId: gateway.uid,
       ctx: request.ctx,
@@ -210,10 +145,94 @@ export default class AdminGatewaysController {
   }
 
   /**
-   * The route group already proved this is staff; what is needed here is the
-   * user itself, for the audit trail.
+   * Takes a device out of service.
+   *
+   * The token is kept so the device can be enabled again without anyone
+   * touching the phone; the authentication check refuses it on every attempt
+   * in between. For a phone that is lost or stolen, `forget` is the action
+   * that removes the credential for good.
    */
-  private assertPlatformOperator(auth: HttpContext['auth']) {
-    return auth.use('api').getUserOrFail()
+  async disable({ auth, params, request, serialize }: HttpContext) {
+    const user = auth.use('api').getUserOrFail()
+    const gateway = await this.find(params.uid)
+
+    gateway.merge({ isActive: false, status: GatewayStatus.DISABLED, nodeId: null })
+    await gateway.save()
+
+    connectionManager.get(gateway.id)?.close('device disabled')
+
+    await GatewayService.logEvent(gateway, 'disabled', { by: user.uid }, 'warning')
+    await AuditService.record({
+      action: AuditAction.GATEWAY_DISABLED,
+      actor: this.actor(user),
+      tenantId: gateway.tenantId,
+      resourceType: 'gateway',
+      resourceId: gateway.uid,
+      ctx: request.ctx,
+    })
+
+    return serialize(GatewayTransformer.transform(gateway))
+  }
+
+  /**
+   * Removes a device for good: its record and every token it holds.
+   *
+   * For a decommissioned, lost or stolen phone. The phone itself, if it is
+   * still around, is told its credential is gone and can register again as a
+   * new device.
+   */
+  async destroy({ auth, params, request, response }: HttpContext) {
+    const user = auth.use('api').getUserOrFail()
+    const gateway = await this.find(params.uid)
+
+    if (gateway.assignment === GatewayAssignment.TENANT) {
+      /**
+       * Settles anything the owning tenant still has pinned to this device
+       * before the device disappears.
+       */
+      await GatewayAssignmentService.assign(gateway, GatewayAssignment.UNASSIGNED, null, {
+        actor: this.actor(user),
+        ctx: request.ctx,
+      })
+    }
+
+    connectionManager.get(gateway.id)?.close('device removed')
+
+    await AuditService.record({
+      action: AuditAction.GATEWAY_FORGOTTEN,
+      actor: this.actor(user),
+      tenantId: gateway.tenantId,
+      resourceType: 'gateway',
+      resourceId: gateway.uid,
+      metadata: { code: gateway.code, deviceId: gateway.deviceId },
+      ctx: request.ctx,
+    })
+
+    await GatewayService.forget(gateway)
+
+    return response.noContent()
+  }
+
+  private async find(uid: string): Promise<Gateway> {
+    const gateway = await GatewayService.findByUid(uid)
+    await gateway.load('tenant')
+    return gateway
+  }
+
+  private async resolveTenant(
+    assignment: GatewayAssignment,
+    tenantUid: string | null | undefined
+  ): Promise<Tenant | null> {
+    if (assignment !== GatewayAssignment.TENANT) return null
+    if (!tenantUid) throw new NotFoundException('Tenant')
+
+    const tenant = await Tenant.findBy('uid', tenantUid)
+    if (!tenant) throw new NotFoundException('Tenant', tenantUid)
+
+    return tenant
+  }
+
+  private actor(user: User) {
+    return { type: ActorType.USER, id: user.id, label: user.email }
   }
 }

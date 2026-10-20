@@ -11,7 +11,7 @@ import Operator from '#models/operator'
 import User from '#models/user'
 import GatewayService from '#services/gateway/gateway_service'
 import gatewayConfig from '#config/gateway'
-import { GatewayStatus, SimState } from '#enums/gateway_status'
+import { GatewayAssignment, GatewayStatus, SimState } from '#enums/gateway_status'
 import { UserRole } from '#enums/tenant'
 import { parseEnvelope, type Envelope } from '#realtime/protocol'
 
@@ -76,11 +76,17 @@ export async function createApprovedGateway(
     smsPerMinute?: number
     priority?: number
     tenantId?: number | null
+    maxInFlight?: number
+    /** Override of the SIM's daily distinct-recipient cap. */
+    recipientLimit?: number | null
   } = {}
 ): Promise<{ gateway: Gateway; simProfile: SimProfile; token: string }> {
-  const { user } = await createPlatformOperator()
-
-  const gateway = await GatewayService.register({
+  /**
+   * Registration hands out the token at once; the device then carries
+   * traffic only once it is assigned. Pool by default, or a tenant's own
+   * phone when `tenantId` is given.
+   */
+  const registered = await GatewayService.register({
     deviceId: `dev-${randomBytes(8).toString('hex')}`,
     deviceName: 'Test Phone',
     manufacturer: 'Samsung',
@@ -88,17 +94,17 @@ export async function createApprovedGateway(
     androidVersion: '15',
     appVersion: '1.0.0',
   })
+  const gateway = registered.gateway
 
-  if (options.tenantId !== undefined || options.priority !== undefined) {
-    gateway.merge({
-      tenantId: options.tenantId ?? null,
-      priority: options.priority ?? gateway.priority,
-    })
-    await gateway.save()
-  }
+  gateway.merge({
+    assignment: options.tenantId ? GatewayAssignment.TENANT : GatewayAssignment.POOL,
+    tenantId: options.tenantId ?? null,
+    priority: options.priority ?? gateway.priority,
+    maxInFlight: options.maxInFlight ?? gateway.maxInFlight,
+  })
+  await gateway.save()
 
-  const claimCode = await GatewayService.approve(gateway, user)
-  const claimed = await GatewayService.claim(gateway.deviceId, claimCode)
+  const claimed = { gateway, token: registered.token! }
 
   const operator = await ensureOperator(options.operatorCode ?? 'beeline')
 
@@ -110,6 +116,7 @@ export async function createApprovedGateway(
     state: SimState.READY,
     isActive: true,
     smsPerMinute: options.smsPerMinute ?? 60,
+    dailyRecipientLimit: options.recipientLimit ?? null,
     createdAt: DateTime.now(),
   })
 
@@ -119,11 +126,34 @@ export async function createApprovedGateway(
 }
 
 /**
+ * Adds another SIM slot to an existing device, for dual SIM scenarios.
+ */
+export async function addSimProfile(
+  gateway: Gateway,
+  slot: number,
+  options: { operatorCode?: string; recipientLimit?: number | null; smsPerMinute?: number } = {}
+): Promise<SimProfile> {
+  const operator = await ensureOperator(options.operatorCode ?? 'beeline')
+
+  return SimProfile.create({
+    gatewayId: gateway.id,
+    slot,
+    operatorId: operator.id,
+    label: `${operator.name} slot ${slot}`,
+    state: SimState.READY,
+    isActive: true,
+    smsPerMinute: options.smsPerMinute ?? 60,
+    dailyRecipientLimit: options.recipientLimit ?? null,
+    createdAt: DateTime.now(),
+  })
+}
+
+/**
  * Operators are reference data owned by a seeder, and the functional suite
  * starts from an empty database. Creating on demand keeps these tests
  * independent of seeder ordering.
  */
-async function ensureOperator(code: string): Promise<Operator> {
+export async function ensureOperator(code: string): Promise<Operator> {
   const known: Record<string, { name: string; mcc: string; mnc: string; prefixes: string[] }> = {
     beeline: { name: 'Beeline', mcc: '434', mnc: '04', prefixes: ['90', '91'] },
     ucell: { name: 'Ucell', mcc: '434', mnc: '05', prefixes: ['93', '94'] },

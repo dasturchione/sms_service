@@ -67,10 +67,25 @@ export type SmsResultPayload = {
   errorMessage?: string | null
   /** When the device actually handed the message to the radio. */
   sentAt?: string | null
+  /**
+   * What the platform itself said, kept verbatim for support: Android's
+   * result code for the send and, when the radio supplied one, its own
+   * error code. Our `errorCode` is the classification; these are the facts
+   * behind it.
+   */
+  platformResult?: number | null
+  radioErrorCode?: number | null
 }
 
 export type SmsDeliveredPayload = {
   jobId: string
+  /**
+   * What the operator's status report said. Absent from older app builds,
+   * which only ever reported success.
+   */
+  status?: 'delivered' | 'failed'
+  /** TP-Status from the report: 0 delivered, 64 and above failed. */
+  statusCode?: number | null
   deliveredAt: string | null
 }
 
@@ -112,6 +127,11 @@ export type SessionReadyPayload = {
   nodeId: string
   heartbeatSeconds: number
   maxInFlight: number
+  /** The device's public code, `K7Q2-M9XD`, shown on the phone as a QR. */
+  code: string
+  assignment: 'unassigned' | 'pool' | 'tenant'
+  /** The owning tenant's name when `assignment` is `tenant`. */
+  tenantName: string | null
   simProfiles: {
     uid: string
     slot: number

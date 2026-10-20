@@ -15,6 +15,17 @@ export const MAX_SEGMENTS = 10
  */
 const MAX_BODY_LENGTH = 1600
 
+/**
+ * A device code as a person might type it: `K7Q2-M9XD`, `k7q2m9xd`. The exact
+ * format is checked when the device is looked up.
+ */
+const deviceCode = () => vine.string().trim().minLength(8).maxLength(16)
+
+/**
+ * SIM slot index as Android reports it, starting at 0.
+ */
+const slot = () => vine.number().withoutDecimals().min(0).max(3)
+
 const priority = () => vine.enum(['high', 'normal', 'low'] as const)
 
 export const sendSmsValidator = vine.create({
@@ -34,6 +45,18 @@ export const sendSmsValidator = vine.create({
    * specific instruction.
    */
   gatewayUid: vine.string().trim().maxLength(40).optional(),
+
+  /**
+   * One of the tenant's own devices, by the code shown on its screen
+   * (`K7Q2-M9XD`). The message goes out through that phone and nowhere else,
+   * waiting if it is offline. Without it, the shared pool is used.
+   */
+  device: deviceCode().optional(),
+
+  /**
+   * A SIM slot on that device. Without it, any usable slot of the device.
+   */
+  slot: slot().optional(),
 
   /**
    * Seconds after which the message must not be sent any more. A one time
@@ -63,6 +86,8 @@ export const sendSmsBatchValidator = vine.create({
         priority: priority().optional(),
         operator: vine.string().trim().maxLength(32).optional(),
         gatewayUid: vine.string().trim().maxLength(40).optional(),
+        device: deviceCode().optional(),
+        slot: slot().optional(),
         expiresIn: vine.number().min(30).max(86400).optional(),
         reference: vine.string().trim().maxLength(128).optional(),
       })
@@ -95,6 +120,8 @@ export const sendSmsBulkValidator = vine.create({
         priority: priority().optional(),
         operator: vine.string().trim().maxLength(32).optional(),
         gatewayUid: vine.string().trim().maxLength(40).optional(),
+        device: deviceCode().optional(),
+        slot: slot().optional(),
         expiresIn: vine.number().min(30).max(86400).optional(),
         reference: vine.string().trim().maxLength(128).optional(),
       })
@@ -106,6 +133,11 @@ export const sendSmsBulkValidator = vine.create({
 export const listSmsValidator = vine.create({
   status: vine.enum(Object.values(SmsStatus)).optional(),
   reference: vine.string().trim().maxLength(128).optional(),
+
+  /**
+   * Only messages sent through one of the tenant's own devices, by code.
+   */
+  device: deviceCode().optional(),
   recipient: vine.string().trim().maxLength(32).optional(),
   from: vine.date().optional(),
   to: vine.date().optional(),

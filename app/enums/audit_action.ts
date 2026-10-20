@@ -30,6 +30,11 @@ export const AuditAction = {
   // Devices
   GATEWAY_REGISTERED: 'gateway.registered',
   GATEWAY_APPROVED: 'gateway.approved',
+  GATEWAY_ASSIGNED: 'gateway.assigned',
+  GATEWAY_CLAIMED: 'gateway.claimed',
+  GATEWAY_RELEASED: 'gateway.released',
+  GATEWAY_ENABLED: 'gateway.enabled',
+  GATEWAY_FORGOTTEN: 'gateway.forgotten',
   GATEWAY_CONNECTED: 'gateway.connected',
   GATEWAY_DISCONNECTED: 'gateway.disconnected',
   GATEWAY_DISABLED: 'gateway.disabled',
@@ -43,8 +48,11 @@ export const AuditAction = {
   // Administration
   TENANT_CREATED: 'tenant.created',
   TENANT_UPDATED: 'tenant.updated',
+  STAFF_CREATED: 'staff.created',
+  STAFF_UPDATED: 'staff.updated',
   API_CLIENT_CREATED: 'api_client.created',
   API_CLIENT_DISABLED: 'api_client.disabled',
+  API_CLIENT_SECRET_ROTATED: 'api_client.secret_rotated',
   WEBHOOK_CREATED: 'webhook.created',
   WEBHOOK_DISABLED: 'webhook.disabled',
 } as const

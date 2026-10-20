@@ -17,6 +17,12 @@ export default class SimProfileTransformer extends BaseTransformer<SimProfile> {
       sentToday: profile.sentToday,
 
       /**
+       * This SIM's own cap on distinct recipients per day. Null means it
+       * inherits its operator's tariff, not that it is unlimited.
+       */
+      dailyRecipientLimit: profile.dailyRecipientLimit,
+
+      /**
        * Null means we have not been able to ask the operator, which is not the
        * same as zero and must not be rendered as an empty balance.
        */

@@ -1,3 +1,4 @@
+import Tenant from '#models/tenant'
 import { DateTime } from 'luxon'
 import db from '@adonisjs/lucid/services/db'
 import logger from '@adonisjs/core/services/logger'
@@ -8,7 +9,7 @@ import gatewayConfig from '#config/gateway'
 import connectionManager from '#realtime/connection_manager'
 import type GatewayConnection from '#realtime/gateway_connection'
 import type { HeartbeatPayload } from '#realtime/protocol'
-import { GatewayStatus, SimState } from '#enums/gateway_status'
+import { GatewayAssignment, GatewayStatus, SimState } from '#enums/gateway_status'
 
 /**
  * Keeps the database's view of the fleet roughly in step with reality.
@@ -167,11 +168,24 @@ export default class GatewayPresenceService {
       .preload('operator')
       .orderBy('slot', 'asc')
 
+    const tenant =
+      gateway.assignment === GatewayAssignment.TENANT && gateway.tenantId
+        ? await Tenant.find(gateway.tenantId)
+        : null
+
     return {
       gatewayUid: gateway.uid,
       nodeId: gatewayConfig.nodeId,
       heartbeatSeconds: gatewayConfig.websocket.heartbeatSeconds,
       maxInFlight: gateway.maxInFlight,
+
+      /**
+       * What the phone shows: its code (and QR) while it waits to be claimed,
+       * and whose it is once it is.
+       */
+      code: gateway.displayCode,
+      assignment: gateway.assignment,
+      tenantName: tenant?.name ?? null,
       simProfiles: profiles.map((profile) => ({
         uid: profile.uid,
         slot: profile.slot,

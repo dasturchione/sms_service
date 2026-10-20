@@ -17,6 +17,9 @@ export const SmsEvent = {
   CANCELLED: 'cancelled',
   EXPIRED: 'expired',
   NO_GATEWAY: 'no_gateway',
+  ALLOWANCE_EXHAUSTED: 'allowance_exhausted',
+  DELIVERY_FAILED: 'delivery_failed',
+  SUPERSEDED: 'superseded',
 } as const
 
 export type SmsEvent = (typeof SmsEvent)[keyof typeof SmsEvent]

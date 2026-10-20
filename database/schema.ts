@@ -8,7 +8,7 @@ import { BaseModel, column } from '@adonisjs/lucid/orm'
 import { DateTime } from 'luxon'
 import type { ClientAbility } from '#enums/ability'
 import type { AuditAction, ActorType } from '#enums/audit_action'
-import type { GatewayStatus, SimState } from '#enums/gateway_status'
+import type { GatewayAssignment, GatewayStatus, SimState } from '#enums/gateway_status'
 import type { UssdKind, UssdStatus } from '#enums/ussd'
 import type { ErrorCode } from '#enums/error_code'
 import type { SmsAttemptStatus, SmsStatus } from '#enums/sms_status'
@@ -187,7 +187,7 @@ export class GatewaySessionSchema extends BaseModel {
 }
 
 export class GatewaySchema extends BaseModel {
-  static $columns = ['androidVersion', 'appVersion', 'approvedAt', 'approvedBy', 'battery', 'claimCode', 'claimCodeExpiresAt', 'createdAt', 'deviceId', 'id', 'isActive', 'isCharging', 'lastConnectedAt', 'lastSeenAt', 'manufacturer', 'maxInFlight', 'model', 'name', 'network', 'nodeId', 'priority', 'signalLevel', 'status', 'tenantId', 'uid', 'updatedAt'] as const
+  static $columns = ['androidVersion', 'appVersion', 'approvedAt', 'approvedBy', 'assignment', 'battery', 'code', 'createdAt', 'deviceId', 'id', 'isActive', 'isCharging', 'lastConnectedAt', 'lastSeenAt', 'manufacturer', 'maxInFlight', 'model', 'name', 'network', 'nodeId', 'priority', 'signalLevel', 'status', 'tenantId', 'uid', 'updatedAt'] as const
   $columns = GatewaySchema.$columns
   @column()
   declare androidVersion: string | null
@@ -198,11 +198,11 @@ export class GatewaySchema extends BaseModel {
   @column()
   declare approvedBy: number | null
   @column()
+  declare assignment: GatewayAssignment
+  @column()
   declare battery: number | null
   @column()
-  declare claimCode: string | null
-  @column.dateTime()
-  declare claimCodeExpiresAt: DateTime | null
+  declare code: string
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
   @column()
@@ -298,7 +298,7 @@ export class OperatorUssdCommandSchema extends BaseModel {
 }
 
 export class OperatorSchema extends BaseModel {
-  static $columns = ['code', 'country', 'createdAt', 'id', 'isActive', 'mcc', 'mnc', 'name', 'phonePrefixes', 'updatedAt'] as const
+  static $columns = ['code', 'country', 'createdAt', 'dailyRecipientLimit', 'id', 'isActive', 'mcc', 'mnc', 'name', 'phonePrefixes', 'updatedAt'] as const
   $columns = OperatorSchema.$columns
   @column()
   declare code: string
@@ -306,6 +306,8 @@ export class OperatorSchema extends BaseModel {
   declare country: string
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
+  @column()
+  declare dailyRecipientLimit: number | null
   @column({ isPrimary: true })
   declare id: number
   @column()
@@ -322,8 +324,29 @@ export class OperatorSchema extends BaseModel {
   declare updatedAt: DateTime | null
 }
 
+export class SimDailyRecipientSchema extends BaseModel {
+  static $columns = ['createdAt', 'firstMessageId', 'id', 'messagesSent', 'recipientNormalized', 'simProfileId', 'updatedAt', 'usageDate'] as const
+  $columns = SimDailyRecipientSchema.$columns
+  @column.dateTime({ autoCreate: true })
+  declare createdAt: DateTime
+  @column()
+  declare firstMessageId: bigint | number | null
+  @column({ isPrimary: true })
+  declare id: bigint | number
+  @column()
+  declare messagesSent: number
+  @column()
+  declare recipientNormalized: string
+  @column()
+  declare simProfileId: number
+  @column.dateTime({ autoCreate: true, autoUpdate: true })
+  declare updatedAt: DateTime | null
+  @column.date()
+  declare usageDate: DateTime
+}
+
 export class SimProfileSchema extends BaseModel {
-  static $columns = ['balanceCheckIntervalMin', 'balanceCheckedAt', 'balanceCurrency', 'balanceFailures', 'counterDate', 'createdAt', 'dailyQuota', 'gatewayId', 'iccidHash', 'id', 'imsiHash', 'isActive', 'label', 'moneyBalance', 'nextAvailableAt', 'operatorId', 'phoneNumber', 'sentToday', 'slot', 'smsBalance', 'smsPerMinute', 'state', 'uid', 'updatedAt', 'ussdSupported'] as const
+  static $columns = ['balanceCheckIntervalMin', 'balanceCheckedAt', 'balanceCurrency', 'balanceFailures', 'counterDate', 'createdAt', 'dailyQuota', 'dailyRecipientLimit', 'gatewayId', 'iccidHash', 'id', 'imsiHash', 'isActive', 'label', 'moneyBalance', 'nextAvailableAt', 'operatorId', 'phoneNumber', 'sentToday', 'slot', 'smsBalance', 'smsPerMinute', 'state', 'uid', 'updatedAt', 'ussdSupported'] as const
   $columns = SimProfileSchema.$columns
   @column()
   declare balanceCheckIntervalMin: number
@@ -339,6 +362,8 @@ export class SimProfileSchema extends BaseModel {
   declare createdAt: DateTime
   @column()
   declare dailyQuota: number | null
+  @column()
+  declare dailyRecipientLimit: number | null
   @column()
   declare gatewayId: number
   @column()
@@ -455,7 +480,7 @@ export class SmsEventSchema extends BaseModel {
 }
 
 export class SmsMessageSchema extends BaseModel {
-  static $columns = ['apiClientId', 'assignedAt', 'attempts', 'bodyHash', 'createdAt', 'deliveredAt', 'dispatchBody', 'encoding', 'errorCode', 'errorMessage', 'expiresAt', 'failedAt', 'id', 'idempotencyKey', 'leaseExpiresAt', 'maxAttempts', 'messageBody', 'nextAttemptAt', 'priority', 'providerMessageId', 'queuedAt', 'recipient', 'recipientNormalized', 'reference', 'requestedGatewayId', 'requestedOperatorId', 'segments', 'sentAt', 'simProfileId', 'status', 'tenantId', 'uid', 'updatedAt'] as const
+  static $columns = ['apiClientId', 'assignedAt', 'attempts', 'bodyHash', 'createdAt', 'deliveredAt', 'dispatchBody', 'encoding', 'errorCode', 'errorMessage', 'expiresAt', 'failedAt', 'id', 'idempotencyKey', 'leaseExpiresAt', 'maxAttempts', 'messageBody', 'nextAttemptAt', 'priority', 'providerMessageId', 'queuedAt', 'recipient', 'recipientNormalized', 'reference', 'requestedGatewayId', 'requestedOperatorId', 'requestedSlot', 'segments', 'sentAt', 'simProfileId', 'status', 'tenantId', 'uid', 'updatedAt'] as const
   $columns = SmsMessageSchema.$columns
   @column()
   declare apiClientId: number | null
@@ -509,6 +534,8 @@ export class SmsMessageSchema extends BaseModel {
   declare requestedGatewayId: number | null
   @column()
   declare requestedOperatorId: number | null
+  @column()
+  declare requestedSlot: number | null
   @column()
   declare segments: number
   @column.dateTime()

@@ -66,6 +66,7 @@ export default {
     gateways: {
       columns: {
         status: enumType('GatewayStatus', '#enums/gateway_status', 'GatewayStatus'),
+        assignment: enumType('GatewayAssignment', '#enums/gateway_status', 'GatewayAssignment'),
       },
     },
 

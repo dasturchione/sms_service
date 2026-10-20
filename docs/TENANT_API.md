@@ -14,10 +14,11 @@ Mundarija:
 3. [Bitta SMS — `POST /sms`](#3-bitta-sms--post-sms)
 4. [Holatni tekshirish va bekor qilish](#4-holatni-tekshirish-va-bekor-qilish)
 5. [SMS holatlari](#5-sms-holatlari)
-6. [Webhook'lar](#6-webhooklar)
-7. [Qayta urinish va `Idempotency-Key`](#7-qayta-urinish-va-idempotency-key)
-8. [Xatolar](#8-xatolar)
-9. [Limitlar](#9-limitlar)
+6. [O'z qurilmalaringiz (telefonlaringiz)](#6-oz-qurilmalaringiz-telefonlaringiz)
+7. [Webhook'lar](#7-webhooklar)
+8. [Qayta urinish va `Idempotency-Key`](#8-qayta-urinish-va-idempotency-key)
+9. [Xatolar](#9-xatolar)
+10. [Limitlar](#10-limitlar)
 
 ---
 
@@ -34,7 +35,7 @@ POST /api/v1/auth/token
 Content-Type: application/json
 
 {
-  "clientId": "cli_...",
+  "clientId": "cid_...",
   "clientSecret": "..."
 }
 ```
@@ -65,6 +66,11 @@ POST /api/v1/auth/token/revoke
 Authorization: Bearer oat_...
 ```
 
+**Secret sizib chiqsa yoki yo'qolsa** — administratordan uni yangilashni so'rang. Administrator
+yangi secret yaratadi (u ham bir marta ko'rsatiladi). `clientId` va ruxsatlar o'zgarmaydi — o'z
+tizimingizda faqat secretni almashtirasiz. Eski secret va u bilan olingan **barcha tokenlar darhol
+ishlamay qoladi**, shuning uchun almashtirgandan keyin yangi token oling.
+
 **Ruxsatlar (abilities).** Token faqat sizga berilgan amallarni bajara oladi:
 
 | Ruxsat | Nima uchun |
@@ -75,6 +81,8 @@ Authorization: Bearer oat_...
 | `report:read` | Kunlik hisobotlar |
 | `balance:read` | O'zingizga biriktirilgan SIM balanslari |
 | `webhook:manage` | Webhook manzillarini boshqarish |
+| `device:read` | O'z qurilmalaringizni ko'rish (6-bo'lim) |
+| `device:manage` | O'z qurilmalaringizni biriktirish, nomlash, bo'shatish |
 
 Ruxsat yetishmasa `403` qaytadi. Kerakli ruxsatni administratordan so'rang.
 
@@ -110,6 +118,8 @@ Body massivning o'zi yoki `{ "messages": [ ... ] }` bo'lishi mumkin — ikkalasi
 | `expiresIn` | yo'q | Soniyalarda, 30 dan 86400 gacha. Shu vaqt ichida yuborilmasa, SMS umuman yuborilmaydi. Tasdiqlash kodlari uchun foydali |
 | `operator` | yo'q | Faqat shu operator SIM'i orqali yuborish: `ucell`, `beeline`, `mobiuz`, `uztelecom`, `humans` |
 | `gatewayUid` | yo'q | Faqat shu qurilma orqali yuborish (administrator beradi) |
+| `device` | yo'q | O'z qurilmangiz kodi, masalan `K7Q2-M9XD` — 6-bo'lim |
+| `slot` | yo'q | O'z qurilmangizdagi SIM sloti: `0` yoki `1`. Faqat `device` bilan |
 
 **Javob** — `202 Accepted`. Natija har bir element uchun, so'rovdagi tartibda:
 
@@ -171,7 +181,7 @@ Muhim qoidalar:
   yuboriladi, qolgani `DUPLICATE_RECIPIENT` bilan rad etiladi. Raqam qanday yozilgani ahamiyatsiz:
   `901234567` va `+998901234567` bitta abonent. Bir raqamga **har xil** matnlar esa normal yuboriladi.
 - **`202` — yetkazildi degani emas.** Bu platforma xabarni qabul qilib navbatga qo'ydi degani.
-  Yakuniy natijani webhook orqali oling (6-bo'lim).
+  Yakuniy natijani webhook orqali oling (7-bo'lim).
 - **`message` maydoni** javobda raqamlari `•` bilan yashirilgan yoki `null` bo'lishi mumkin — bu
   sizning tenant sozlamangizga bog'liq (tasdiqlash kodlari loglarda qolmasligi uchun). Matn abonentga
   baribir to'liq yuboriladi.
@@ -231,6 +241,7 @@ GET /api/v1/sms?status=failed&reference=qarz-1042&limit=50
 | `status` | Holat bo'yicha filtr (5-bo'lim) |
 | `reference` | Sizning `reference` qiymatingiz bo'yicha |
 | `recipient` | Raqam bo'yicha (istalgan ko'rinishda yozish mumkin) |
+| `device` | Faqat shu o'z qurilmangiz orqali yuborilganlar |
 | `from`, `to` | Yaratilgan vaqt oralig'i, ISO 8601 |
 | `limit` | 1–200, standart 50 |
 | `cursor` | Keyingi sahifa: oldingi javobdagi `meta.nextCursor` |
@@ -266,21 +277,185 @@ GET /api/v1/reports/daily?from=2026-09-01&to=2026-09-29
 | `queued` | Qabul qilindi, navbatda | yo'q |
 | `assigned` | Qurilmaga biriktirildi | yo'q |
 | `sending` | Qurilma yuborayapti | yo'q |
-| `sent` | Operatorga topshirildi — **muvaffaqiyat** | amalda ha |
-| `delivered` | Operator yetkazilganini tasdiqladi | ha |
-| `failed` | Yuborib bo'lmadi, `error.code` sababni aytadi | ha |
+| `sent` | Telefon xabarni operator tarmog'iga topshirdi va tarmoq qabul qildi — **muvaffaqiyat** | amalda ha |
+| `delivered` | Operator xabar abonent telefoniga yetganini tasdiqladi | ha |
+| `failed` | Yuborib bo'lmadi yoki operator yetkazilmaganini aytdi, `error.code` sababni aytadi | ha |
 | `cancelled` | Siz bekor qildingiz | ha |
 | `expired` | `expiresIn` muddati navbatda o'tib ketdi | ha |
 
-`sent` — asosiy muvaffaqiyat belgisi. Yetkazilganlik hisoboti (`delivered`) hamma operator va
-qurilmada kelmaydi, shuning uchun unga tayanmang.
+`sent` — asosiy muvaffaqiyat belgisi, lekin u "abonentga yetdi" degani emas: tarmoq qabul qildi
+degani. Yetkazilganlik hisoboti (`delivered`) hamma operator va qurilmada kelmaydi, shuning uchun
+unga tayanmang. Hisobot kelib, unda "yetkazilmadi" deyilsa, xabar `sent` dan `failed` ga o'tadi
+(`error.code = DELIVERY_FAILED`) va `sms.failed` webhook'i yuboriladi.
+
+`queued` holatidagi xabarda `error.code` bo'lishi mumkin — bu xato emas, **kutish sababi**:
+`NO_GATEWAY_AVAILABLE` (hozir bo'sh qurilma yo'q) yoki `RECIPIENT_ALLOWANCE_EXHAUSTED` (umumiy
+pooldagi SIM'larning bugungi turli raqamlar limiti tugagan; ertasi kuni yoki yangi qurilma
+qo'shilganda yuboriladi).
 
 Vaqtinchalik xatoda (qurilma oflayn, tarmoq yo'q) platforma o'zi boshqa SIM orqali qayta urinadi,
 standart bo'yicha 3 martagacha. Siz qayta yuborishingiz shart emas.
 
 ---
 
-## 6. Webhook'lar
+## 6. O'z qurilmalaringiz (telefonlaringiz)
+
+SMS'ni platformaning umumiy SIM kartalari orqali emas, **o'zingizning telefoningiz va SIM
+kartangiz** orqali yuborishingiz mumkin. Bunday qurilma faqat sizning xabarlaringizni yuboradi —
+platforma uni boshqa hech kim uchun ishlatmaydi.
+
+### 6.1 Qurilmani ulash
+
+1. Telefonga platformaning **SMS Gateway** ilovasini o'rnating (APK'ni administrator beradi).
+2. Ilovada SMS va telefon ruxsatlarini bering, server manzilini kiriting va **"Ulanish"** ni bosing.
+3. Ilova ekranida **QR kod** va **8 belgili qurilma kodi** chiqadi, masalan `K7Q2-M9XD`. Bu kod
+   "Egasi kutilmoqda" holatida ko'rinib turadi.
+4. Shu kod bilan qurilmani o'zingizga biriktiring:
+
+```http
+POST /api/v1/devices/claim
+Authorization: Bearer oat_...
+Content-Type: application/json
+
+{ "code": "K7Q2-M9XD", "name": "Ofis telefoni" }
+```
+
+Kodni istalgan ko'rinishda yozish mumkin: `K7Q2-M9XD`, `k7q2m9xd`. `name` ixtiyoriy.
+
+| Javob | Ma'nosi |
+|---|---|
+| `201` | Qurilma sizga biriktirildi |
+| `200` | Qurilma allaqachon sizniki edi (qayta yuborish xavfsiz) |
+| `404` | Bunday kod yo'q — ekrandagi kodni tekshiring |
+| `409` `DEVICE_ALREADY_CLAIMED` | Qurilma boshqa mijozga yoki umumiy poolga biriktirilgan |
+| `409` `FORBIDDEN` | Qurilmani administrator o'chirib qo'ygan |
+
+Biriktirilishi bilan telefon ekrani o'zgaradi: "Biriktirilgan: <mijoz nomi>".
+
+> Qurilmani administrator ham admin paneldan sizga biriktirishi mumkin — natija bir xil.
+
+### 6.2 Qurilmalarni ko'rish
+
+```http
+GET /api/v1/devices
+GET /api/v1/devices/K7Q2-M9XD
+```
+
+```json
+{
+  "data": [
+    {
+      "code": "K7Q2-M9XD",
+      "name": "Ofis telefoni",
+      "status": "online",
+      "online": true,
+      "battery": 87,
+      "isCharging": true,
+      "network": "wifi",
+      "signalLevel": 4,
+      "lastSeenAt": "2026-10-20T10:15:02.000+05:00",
+      "device": {
+        "manufacturer": "Xiaomi",
+        "model": "23117RA68G",
+        "androidVersion": "16",
+        "appVersion": "1.0.0"
+      },
+      "waiting": 0,
+      "sims": [
+        {
+          "slot": 0,
+          "label": "Ucell",
+          "operator": "ucell",
+          "phoneNumber": "+998931234567",
+          "state": "ready",
+          "isActive": true,
+          "today": { "sent": 42, "failed": 1 },
+          "recipients": { "used": 40, "limit": null }
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Maydon | Tavsif |
+|---|---|
+| `online` | Qurilma hozir serverga ulanganmi |
+| `waiting` | Shu qurilmani kutib navbatda turgan xabarlaringiz soni |
+| `sims[].slot` | SIM sloti: `0` — birinchi SIM, `1` — ikkinchi SIM |
+| `sims[].state` | `ready` — SIM ishlayapti; boshqa qiymat SIM o'qilmayotganini bildiradi |
+| `sims[].today` | Bugun (Toshkent vaqti bilan) shu SIM orqali yuborilgan va xato bo'lgan SMS'lar |
+| `sims[].recipients` | Bugun nechta turli raqamga yozilgani. `limit: null` — cheklov yo'q |
+
+**Nomini o'zgartirish:**
+
+```http
+PATCH /api/v1/devices/K7Q2-M9XD
+Content-Type: application/json
+
+{ "name": "Filial telefoni" }
+```
+
+**Qurilmani bo'shatish** (endi kerak bo'lmasa):
+
+```http
+POST /api/v1/devices/K7Q2-M9XD/release
+```
+
+Qurilma "Egasi kutilmoqda" holatiga qaytadi. Uni kutib turgan xabarlaringiz `failed` /
+`DEVICE_RELEASED` bo'ladi.
+
+### 6.3 O'z qurilmangiz orqali yuborish
+
+`POST /sms`, `/sms/bulk` va `/sms/batch` da ikkita ixtiyoriy maydon bor:
+
+| Maydon | Tavsif |
+|---|---|
+| `device` | Qurilma kodi, masalan `"K7Q2-M9XD"`. Xabar **faqat** shu qurilma orqali ketadi |
+| `slot` | SIM sloti (`0` yoki `1`). Faqat `device` bilan birga. Berilmasa — qurilmaning istalgan ishlayotgan SIM'i |
+
+```http
+POST /api/v1/sms
+Content-Type: application/json
+
+{
+  "to": "+998901234567",
+  "message": "Buyurtmangiz tayyor",
+  "device": "K7Q2-M9XD",
+  "slot": 1
+}
+```
+
+Ommaviy yuborishda har elementga alohida `device`/`slot` berish mumkin:
+
+```json
+[
+  { "to": "+998901234567", "message": "...", "device": "K7Q2-M9XD", "slot": 0 },
+  { "to": "+998911234567", "message": "...", "device": "K7Q2-M9XD", "slot": 1 },
+  { "to": "+998931234567", "message": "..." }
+]
+```
+
+Qoidalar:
+
+- **`device` berilmasa** — xabar platformaning umumiy SIM kartalari orqali ketadi (oddiy holat).
+- **Qurilma oflayn yoki band bo'lsa** xabar boshqa joyga o'tib ketmaydi — shu qurilmani navbatda
+  kutadi. Vaqtga sezgir xabarlar uchun `expiresIn` qo'ying.
+- O'z qurilmangizda operatorning **"kuniga 60 ta turli raqam"** cheklovi platforma tomonidan
+  qo'llanmaydi. Bu cheklovni SIM kartangiz tarifi bo'yicha o'zingiz kuzatasiz.
+- Faqat **sizga biriktirilgan** qurilma kodini ishlata olasiz. Boshqa kod `422` /
+  `GATEWAY_NOT_FOUND` qaytaradi. Qurilmada bunday slot bo'lmasa — `422` / `VALIDATION_FAILED`.
+- `device` va `gatewayUid` ni birga berib bo'lmaydi.
+
+Faqat shu qurilma orqali yuborilgan xabarlar ro'yxati:
+
+```http
+GET /api/v1/sms?device=K7Q2-M9XD
+```
+
+---
+
+## 7. Webhook'lar
 
 Holatni so'rab turish (polling) o'rniga, platforma o'zi sizga xabar beradi.
 
@@ -409,7 +584,7 @@ return response()->noContent();
 
 ---
 
-## 7. Qayta urinish va `Idempotency-Key`
+## 8. Qayta urinish va `Idempotency-Key`
 
 Tarmoq uzilsa, so'rovingiz serverga yetib borganmi yoki yo'qmi — bilmaysiz. Qayta yuborsangiz, abonent
 ikki marta SMS olishi mumkin. Buning oldini olish uchun `POST /sms`, `/sms/bulk` va `/sms/batch`
@@ -438,7 +613,7 @@ Qachon qayta urinish kerak:
 
 ---
 
-## 8. Xatolar
+## 9. Xatolar
 
 Barcha xatolar bir xil ko'rinishda:
 
@@ -464,6 +639,7 @@ Dasturingizda `code` bo'yicha qaror qiling, `message` matni o'zgarishi mumkin.
 | `IDEMPOTENCY_CONFLICT` | 409 | Kalit boshqa body bilan ishlatilgan |
 | `TENANT_SUSPENDED` | 403 | Hisobingiz to'xtatilgan |
 | `CLIENT_DISABLED` | 403 | API klient o'chirilgan |
+| `DEVICE_ALREADY_CLAIMED` | 409 | Qurilma boshqa mijozga yoki umumiy poolga biriktirilgan |
 
 Element darajasidagi xatolar (ommaviy yuborishda `data[i].error` ichida) va `failed` holatidagi
 SMS'lar `error.code` maydonida:
@@ -474,14 +650,17 @@ SMS'lar `error.code` maydonida:
 | `MESSAGE_TOO_LONG` | Matn 10 SMS qismidan uzun |
 | `DUPLICATE_RECIPIENT` | Shu so'rovda bu raqamga shu matn allaqachon bor |
 | `OPERATOR_NOT_FOUND` | `operator` qiymati noma'lum |
-| `GATEWAY_NOT_FOUND` | `gatewayUid` topilmadi |
+| `GATEWAY_NOT_FOUND` | `gatewayUid` yoki `device` topilmadi (yoki u sizniki emas) |
 | `MESSAGE_EXPIRED` | `expiresIn` muddati o'tdi |
 | `ATTEMPTS_EXHAUSTED` | Barcha urinishlar muvaffaqiyatsiz |
-| `NO_GATEWAY_AVAILABLE` | Hozir bo'sh qurilma yo'q, xabar navbatda kutadi |
+| `NO_GATEWAY_AVAILABLE` | Hozir bo'sh qurilma yo'q, xabar navbatda kutadi (yakuniy emas) |
+| `RECIPIENT_ALLOWANCE_EXHAUSTED` | SIM'larning bugungi turli raqamlar limiti tugagan, xabar navbatda kutadi (yakuniy emas) |
+| `DELIVERY_FAILED` | Operator hisoboti: xabar abonentga yetkazilmadi |
+| `DEVICE_RELEASED` | Xabar kutgan qurilma sizdan olib qo'yildi yoki bo'shatildi |
 
 ---
 
-## 9. Limitlar
+## 10. Limitlar
 
 | Nima | Qiymat |
 |---|---|

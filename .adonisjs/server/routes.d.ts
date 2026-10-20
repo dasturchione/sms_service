@@ -7,6 +7,7 @@ export type ScannedRoutes = {
     'client.token.store': { paramsTuple?: []; params?: {} }
     'sms.store': { paramsTuple?: []; params?: {} }
     'sms.batch': { paramsTuple?: []; params?: {} }
+    'sms.bulk': { paramsTuple?: []; params?: {} }
     'sms.index': { paramsTuple?: []; params?: {} }
     'sms.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'sms.cancel': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
@@ -18,13 +19,16 @@ export type ScannedRoutes = {
     'webhooks.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'webhooks.update': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'webhooks.destroy': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'devices.index': { paramsTuple?: []; params?: {} }
+    'devices.claim': { paramsTuple?: []; params?: {} }
+    'devices.show': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
+    'devices.update': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
+    'devices.release': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
     'client.token.destroy': { paramsTuple?: []; params?: {} }
     'gateway.register': { paramsTuple?: []; params?: {} }
-    'gateway.claim': { paramsTuple?: []; params?: {} }
     'gateway.provision': { paramsTuple?: []; params?: {} }
     'gateway.sims.sync': { paramsTuple?: []; params?: {} }
     'gateway.results': { paramsTuple?: []; params?: {} }
-    'auth.new_account.store': { paramsTuple?: []; params?: {} }
     'auth.access_tokens.store': { paramsTuple?: []; params?: {} }
     'profile.profile.show': { paramsTuple?: []; params?: {} }
     'profile.access_tokens.destroy': { paramsTuple?: []; params?: {} }
@@ -36,6 +40,7 @@ export type ScannedRoutes = {
     'admin.clients.index': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.clients.store': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.clients.update': { paramsTuple: [ParamValue,ParamValue]; params: {'uid': ParamValue,'clientUid': ParamValue} }
+    'admin.clients.rotate_secret': { paramsTuple: [ParamValue,ParamValue]; params: {'uid': ParamValue,'clientUid': ParamValue} }
     'admin.webhooks.index': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.reports.daily': { paramsTuple?: []; params?: {} }
     'admin.staff.index': { paramsTuple?: []; params?: {} }
@@ -45,17 +50,18 @@ export type ScannedRoutes = {
     'admin.messages.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.messages.cancel': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.audit.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.show': { paramsTuple: [ParamValue]; params: {'simUid': ParamValue} }
     'admin.jobs.index': { paramsTuple?: []; params?: {} }
     'admin.jobs.retry': { paramsTuple: [ParamValue]; params: {'id': ParamValue} }
     'admin.jobs.destroy': { paramsTuple: [ParamValue]; params: {'id': ParamValue} }
     'admin.gateways.index': { paramsTuple?: []; params?: {} }
     'admin.gateways.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.update': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
-    'admin.gateways.approve': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
-    'admin.gateways.claimCode': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.diagnostics': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.enable': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.disable': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'admin.gateways.destroy': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.operators.index': { paramsTuple?: []; params?: {} }
     'admin.operators.store': { paramsTuple?: []; params?: {} }
     'admin.operators.show': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
@@ -74,23 +80,23 @@ export type ScannedRoutes = {
     'client.token.store': { paramsTuple?: []; params?: {} }
     'sms.store': { paramsTuple?: []; params?: {} }
     'sms.batch': { paramsTuple?: []; params?: {} }
+    'sms.bulk': { paramsTuple?: []; params?: {} }
     'sms.cancel': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'webhooks.store': { paramsTuple?: []; params?: {} }
+    'devices.claim': { paramsTuple?: []; params?: {} }
+    'devices.release': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
     'client.token.destroy': { paramsTuple?: []; params?: {} }
     'gateway.register': { paramsTuple?: []; params?: {} }
-    'gateway.claim': { paramsTuple?: []; params?: {} }
     'gateway.sims.sync': { paramsTuple?: []; params?: {} }
     'gateway.results': { paramsTuple?: []; params?: {} }
-    'auth.new_account.store': { paramsTuple?: []; params?: {} }
     'auth.access_tokens.store': { paramsTuple?: []; params?: {} }
     'profile.access_tokens.destroy': { paramsTuple?: []; params?: {} }
     'admin.tenants.store': { paramsTuple?: []; params?: {} }
     'admin.clients.store': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'admin.clients.rotate_secret': { paramsTuple: [ParamValue,ParamValue]; params: {'uid': ParamValue,'clientUid': ParamValue} }
     'admin.staff.store': { paramsTuple?: []; params?: {} }
     'admin.messages.cancel': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.jobs.retry': { paramsTuple: [ParamValue]; params: {'id': ParamValue} }
-    'admin.gateways.approve': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
-    'admin.gateways.claimCode': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.enable': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.gateways.disable': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.operators.store': { paramsTuple?: []; params?: {} }
@@ -104,6 +110,8 @@ export type ScannedRoutes = {
     'balances.index': { paramsTuple?: []; params?: {} }
     'webhooks.index': { paramsTuple?: []; params?: {} }
     'webhooks.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'devices.index': { paramsTuple?: []; params?: {} }
+    'devices.show': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
     'gateway.provision': { paramsTuple?: []; params?: {} }
     'profile.profile.show': { paramsTuple?: []; params?: {} }
     'admin.overview': { paramsTuple?: []; params?: {} }
@@ -116,6 +124,8 @@ export type ScannedRoutes = {
     'admin.messages.index': { paramsTuple?: []; params?: {} }
     'admin.messages.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.audit.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.show': { paramsTuple: [ParamValue]; params: {'simUid': ParamValue} }
     'admin.jobs.index': { paramsTuple?: []; params?: {} }
     'admin.gateways.index': { paramsTuple?: []; params?: {} }
     'admin.gateways.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
@@ -136,6 +146,8 @@ export type ScannedRoutes = {
     'balances.index': { paramsTuple?: []; params?: {} }
     'webhooks.index': { paramsTuple?: []; params?: {} }
     'webhooks.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'devices.index': { paramsTuple?: []; params?: {} }
+    'devices.show': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
     'gateway.provision': { paramsTuple?: []; params?: {} }
     'profile.profile.show': { paramsTuple?: []; params?: {} }
     'admin.overview': { paramsTuple?: []; params?: {} }
@@ -148,6 +160,8 @@ export type ScannedRoutes = {
     'admin.messages.index': { paramsTuple?: []; params?: {} }
     'admin.messages.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.audit.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.index': { paramsTuple?: []; params?: {} }
+    'admin.allowances.show': { paramsTuple: [ParamValue]; params: {'simUid': ParamValue} }
     'admin.jobs.index': { paramsTuple?: []; params?: {} }
     'admin.gateways.index': { paramsTuple?: []; params?: {} }
     'admin.gateways.show': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
@@ -162,6 +176,7 @@ export type ScannedRoutes = {
   }
   PATCH: {
     'webhooks.update': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
+    'devices.update': { paramsTuple: [ParamValue]; params: {'code': ParamValue} }
     'admin.tenants.update': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.clients.update': { paramsTuple: [ParamValue,ParamValue]; params: {'uid': ParamValue,'clientUid': ParamValue} }
     'admin.staff.update': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
@@ -172,6 +187,7 @@ export type ScannedRoutes = {
   DELETE: {
     'webhooks.destroy': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.jobs.destroy': { paramsTuple: [ParamValue]; params: {'id': ParamValue} }
+    'admin.gateways.destroy': { paramsTuple: [ParamValue]; params: {'uid': ParamValue} }
     'admin.operators.ussd.destroy': { paramsTuple: [ParamValue,ParamValue]; params: {'code': ParamValue,'kind': ParamValue} }
   }
   PUT: {

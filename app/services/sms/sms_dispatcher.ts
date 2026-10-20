@@ -5,6 +5,8 @@ import SmsMessage from '#models/sms_message'
 import SmsAttempt from '#models/sms_attempt'
 import SmsService from '#services/sms/sms_service'
 import SimProfileSelector, { type RouteCandidate } from '#services/sms/sim_profile_selector'
+import RecipientAllowance, { type ClaimOutcome } from '#services/sms/recipient_allowance'
+import { billingDate } from '#utils/billing_day'
 import { noCapacityDelaySeconds } from '#services/sms/retry_policy'
 import connectionManager from '#realtime/connection_manager'
 import { ServerEvent, type SmsSendPayload } from '#realtime/protocol'
@@ -12,6 +14,20 @@ import gatewayConfig from '#config/gateway'
 import { ErrorCode } from '#enums/error_code'
 import { SmsEvent } from '#enums/sms_event'
 import { SmsAttemptStatus, SmsStatus } from '#enums/sms_status'
+
+/**
+ * Why a message is waiting. Stored as the message's error code while it is
+ * queued, so a tenant or an operator reading it can tell "no device online"
+ * from "every SIM has used today's allowance".
+ */
+const WAITING_CODES: readonly ErrorCode[] = [
+  ErrorCode.NO_GATEWAY_AVAILABLE,
+  ErrorCode.RECIPIENT_ALLOWANCE_EXHAUSTED,
+]
+
+type RouteDecision =
+  | { kind: 'route'; candidate: RouteCandidate; allowance: ClaimOutcome; usageDate: string }
+  | { kind: 'defer'; until: DateTime; reason: 'unavailable' | 'exhausted' | 'busy' }
 
 export type DispatchOutcome = {
   dispatched: number
@@ -94,25 +110,15 @@ export default class SmsDispatcher {
         return { result: 'undeliverable' as const }
       }
 
-      const candidate = await this.pickRoute(message, trx)
+      const decision = await this.pickRoute(message, trx)
 
-      if (!candidate) {
-        /**
-         * No capacity right now. The message stays queued and is pushed a few
-         * seconds into the future so the worker does not spin on it.
-         */
-        message.nextAttemptAt = DateTime.now().plus({ seconds: noCapacityDelaySeconds() })
-        await message.useTransaction(trx).save()
-
-        if (message.attempts === 0) {
-          await SmsService.recordEvent(message, SmsEvent.NO_GATEWAY, null, null, trx)
-        }
-
+      if (decision.kind === 'defer') {
+        await this.defer(message, decision, trx)
         return { result: 'deferred' as const }
       }
 
-      const attempt = await this.assign(message, candidate, trx)
-      return { result: 'assigned' as const, message, candidate, attempt }
+      const attempt = await this.assign(message, decision, trx)
+      return { result: 'assigned' as const, message, candidate: decision.candidate, attempt }
     })
 
     if (claim === null) return 'idle'
@@ -134,7 +140,7 @@ export default class SmsDispatcher {
     return 'dispatched'
   }
 
-  private static async pickRoute(message: SmsMessage, trx: any): Promise<RouteCandidate | null> {
+  private static async pickRoute(message: SmsMessage, trx: any): Promise<RouteDecision> {
     /**
      * A SIM that already failed this message is not tried again: whatever went
      * wrong there is likely to go wrong again, and rotating gives the message
@@ -149,35 +155,148 @@ export default class SmsDispatcher {
       .map((attempt) => attempt.simProfileId)
       .filter((id): id is number => id !== null)
 
+    const usageDate = billingDate()
+
     const candidates = await SimProfileSelector.candidates(
       {
         tenantId: message.tenantId,
         recipient: message.recipientNormalized,
         requestedOperatorId: message.requestedOperatorId,
         requestedGatewayId: message.requestedGatewayId,
+        requestedSlot: message.requestedSlot,
         excludeSimProfileIds,
+        usageDate,
       },
       trx
     )
+
+    const plan = SimProfileSelector.plan(
+      candidates,
+      message.recipientNormalized,
+      gatewayConfig.routing.fillStrategy
+    )
+
+    if (plan.kind === 'unavailable') {
+      return {
+        kind: 'defer',
+        reason: 'unavailable',
+        until: DateTime.now().plus({ seconds: noCapacityDelaySeconds() }),
+      }
+    }
+
+    if (plan.kind === 'exhausted') {
+      return {
+        kind: 'defer',
+        reason: 'exhausted',
+        until: DateTime.now().plus({
+          seconds: gatewayConfig.routing.allowanceExhaustedRetrySeconds,
+        }),
+      }
+    }
+
+    if (plan.kind === 'wait') {
+      return { kind: 'defer', reason: 'busy', until: plan.until }
+    }
 
     /**
      * Walk the shortlist: the best candidate may lose the reservation race to
      * another worker, and the next one is then the right answer.
      */
-    for (const candidate of candidates) {
-      if (await SimProfileSelector.reserve(candidate, trx)) {
-        return candidate
+    for (const candidate of plan.candidates) {
+      if (!(await SimProfileSelector.reserve(candidate, trx))) continue
+
+      /**
+       * The reservation holds the SIM's row lock for the rest of this
+       * transaction, so the allowance check below is exact.
+       */
+      const allowance = await RecipientAllowance.claim(trx, {
+        simProfileId: candidate.simProfileId,
+        recipient: message.recipientNormalized,
+        usageDate,
+        limit: candidate.recipientLimit,
+        messageId: message.id,
+      })
+
+      if (allowance === 'full') {
+        /**
+         * The shortlist was read before the lock, and another message took
+         * the last slot in between. Undo the reservation inside this same
+         * transaction (a second connection would wait on our own lock) and
+         * let the next pass plan again from fresh numbers.
+         */
+        await SimProfileSelector.release(candidate.simProfileId, trx)
+        continue
       }
+
+      return { kind: 'route', candidate, allowance, usageDate }
     }
 
-    return null
+    /**
+     * Every candidate was taken by another worker a moment ago. That is
+     * contention, not a lack of capacity, so the wait is short.
+     */
+    return {
+      kind: 'defer',
+      reason: 'busy',
+      until: DateTime.now().plus({ seconds: noCapacityDelaySeconds() }),
+    }
+  }
+
+  /**
+   * Parks a message until it is worth looking at again.
+   *
+   * The timeline gets one entry per change of reason, not one per pass: a
+   * message waiting all afternoon for tomorrow's allowance would otherwise
+   * collect an event every five minutes, and one stuck without a device used
+   * to collect one every five seconds.
+   */
+  private static async defer(
+    message: SmsMessage,
+    decision: Extract<RouteDecision, { kind: 'defer' }>,
+    trx: any
+  ): Promise<void> {
+    const previousCode = message.errorCode
+    message.nextAttemptAt = decision.until
+
+    if (decision.reason === 'unavailable') {
+      message.errorCode = ErrorCode.NO_GATEWAY_AVAILABLE
+      message.errorMessage = message.requestedGatewayId
+        ? 'The device this message was sent to is offline or has no usable SIM. ' +
+          'It will go out as soon as the device is back.'
+        : 'No device is able to carry this message right now'
+    } else if (decision.reason === 'exhausted') {
+      message.errorCode = ErrorCode.RECIPIENT_ALLOWANCE_EXHAUSTED
+      message.errorMessage =
+        'Every SIM has reached its daily limit of distinct recipients. ' +
+        'Waiting for a new device or for the next day.'
+    } else if (previousCode && WAITING_CODES.includes(previousCode)) {
+      /**
+       * Merely waiting for a busy SIM is normal pacing, not a problem worth
+       * reporting. A stale reason from an earlier pass is cleared; the error
+       * from a failed attempt, if any, is kept because it is still the most
+       * useful thing to show.
+       */
+      message.errorCode = null
+      message.errorMessage = null
+    }
+
+    await message.useTransaction(trx).save()
+
+    if (message.errorCode === previousCode) return
+
+    if (message.errorCode === ErrorCode.NO_GATEWAY_AVAILABLE) {
+      await SmsService.recordEvent(message, SmsEvent.NO_GATEWAY, null, null, trx)
+    } else if (message.errorCode === ErrorCode.RECIPIENT_ALLOWANCE_EXHAUSTED) {
+      await SmsService.recordEvent(message, SmsEvent.ALLOWANCE_EXHAUSTED, null, null, trx)
+    }
   }
 
   private static async assign(
     message: SmsMessage,
-    candidate: RouteCandidate,
+    decision: Extract<RouteDecision, { kind: 'route' }>,
     trx: any
   ): Promise<SmsAttempt> {
+    const { candidate } = decision
     const now = DateTime.now()
 
     message.merge({
@@ -209,10 +328,23 @@ export default class SmsDispatcher {
       .useTransaction(trx)
       .save()
 
+    /**
+     * The allowance outcome goes on the timeline, so "why did this go through
+     * slot 2" is answered by reading the message rather than reconstructing
+     * the ledger.
+     */
     await SmsService.recordEvent(
       message,
       SmsEvent.ASSIGNED,
-      { gatewayUid: candidate.gatewayUid, slot: candidate.slot, attempt: message.attempts },
+      {
+        gatewayUid: candidate.gatewayUid,
+        simUid: candidate.simProfileUid,
+        slot: candidate.slot,
+        attempt: message.attempts,
+        allowance: decision.allowance,
+        recipientsUsed: candidate.recipientsUsed + (decision.allowance === 'claimed' ? 1 : 0),
+        recipientLimit: candidate.recipientLimit,
+      },
       candidate.gatewayId,
       trx
     )
@@ -261,7 +393,23 @@ export default class SmsDispatcher {
     candidate: RouteCandidate,
     attempt: SmsAttempt
   ): Promise<void> {
+    const assignedAt = message.assignedAt
+
     await db.transaction(async (trx) => {
+      /**
+       * Nothing reached the device, so the allowance slot this send took is
+       * handed back, unless something to the same number already went out on
+       * this SIM today.
+       */
+      if (assignedAt) {
+        await RecipientAllowance.release(trx, {
+          simProfileId: candidate.simProfileId,
+          recipient: message.recipientNormalized,
+          usageDate: billingDate(assignedAt),
+          exceptMessageId: message.id,
+        })
+      }
+
       message.merge({
         status: SmsStatus.QUEUED,
         simProfileId: null,

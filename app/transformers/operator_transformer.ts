@@ -19,6 +19,12 @@ export default class OperatorTransformer extends BaseTransformer<Operator> {
 
       phonePrefixes: operator.phonePrefixes,
       isActive: operator.isActive,
+
+      /**
+       * Distinct recipients a SIM on this tariff may reach per day. Null
+       * means no cap.
+       */
+      dailyRecipientLimit: operator.dailyRecipientLimit,
       createdAt: operator.createdAt,
       updatedAt: operator.updatedAt,
     }

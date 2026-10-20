@@ -1,3 +1,7 @@
+import RecipientAllowance from '#services/sms/recipient_allowance'
+import { billingDate } from '#utils/billing_day'
+import gatewayConfig from '#config/gateway'
+import { ErrorCode } from '#enums/error_code'
 import db from '@adonisjs/lucid/services/db'
 import JobQueue from '#services/infra/job_queue'
 import connectionManager from '#realtime/connection_manager'
@@ -9,6 +13,21 @@ export type PlatformSnapshot = {
   jobs: Record<string, { pending: number; failed: number }>
   gateways: { online: number; total: number; connectedToThisNode: number }
   recent: { total: number; sent: number; failed: number }
+
+  /**
+   * Today's distinct-recipient allowance across the fleet. `capacity` and
+   * `remaining` cover capped SIMs only; `uncappedSims` counts the rest, which
+   * never run out. `waiting` is how many messages are parked because every
+   * SIM has used its share.
+   */
+  allowance: {
+    date: string
+    used: number
+    capacity: number
+    remaining: number
+    uncappedSims: number
+    waiting: number
+  }
 }
 
 /**
@@ -27,12 +46,13 @@ const RECENT_WINDOW_MINUTES = 5
  */
 export default class MonitoringService {
   static async snapshot(): Promise<PlatformSnapshot> {
-    const [byStatus, oldest, jobs, gateways, recent] = await Promise.all([
+    const [byStatus, oldest, jobs, gateways, recent, allowance] = await Promise.all([
       this.messagesByStatus(),
       this.oldestQueuedSeconds(),
       JobQueue.depth(),
       this.gatewayCounts(),
       this.recentOutcomes(),
+      this.allowance(),
     ])
 
     const depth =
@@ -45,6 +65,34 @@ export default class MonitoringService {
       jobs,
       gateways,
       recent,
+      allowance,
+    }
+  }
+
+  private static async allowance(): Promise<PlatformSnapshot['allowance']> {
+    const date = billingDate()
+    const sims = await RecipientAllowance.usageBySim(
+      date,
+      gatewayConfig.routing.defaultDailyRecipientLimit
+    )
+
+    const active = sims.filter((sim) => sim.isActive)
+    const capped = active.filter((sim) => sim.limit !== null)
+
+    const waiting = await db
+      .from('sms_messages')
+      .where('status', SmsStatus.QUEUED)
+      .where('error_code', ErrorCode.RECIPIENT_ALLOWANCE_EXHAUSTED)
+      .count('* as total')
+      .first()
+
+    return {
+      date,
+      used: active.reduce((sum, sim) => sum + sim.used, 0),
+      capacity: capped.reduce((sum, sim) => sum + (sim.limit ?? 0), 0),
+      remaining: capped.reduce((sum, sim) => sum + (sim.remaining ?? 0), 0),
+      uncappedSims: active.length - capped.length,
+      waiting: Number(waiting?.total ?? 0),
     }
   }
 
@@ -78,6 +126,27 @@ export default class MonitoringService {
 
     metric('sms_gateways_connected', 'Devices whose socket lives on this node', 'gauge')
     lines.push(`sms_gateways_connected ${snapshot.gateways.connectedToThisNode}`)
+
+    metric(
+      'sms_recipient_allowance_used',
+      'Distinct recipients taken today across all active SIMs',
+      'gauge'
+    )
+    lines.push(`sms_recipient_allowance_used ${snapshot.allowance.used}`)
+
+    metric(
+      'sms_recipient_allowance_remaining',
+      'Distinct recipients still available today on capped SIMs',
+      'gauge'
+    )
+    lines.push(`sms_recipient_allowance_remaining ${snapshot.allowance.remaining}`)
+
+    metric(
+      'sms_messages_waiting_for_allowance',
+      'Queued messages parked because every SIM has used its daily allowance',
+      'gauge'
+    )
+    lines.push(`sms_messages_waiting_for_allowance ${snapshot.allowance.waiting}`)
 
     metric('sms_jobs', 'Background jobs by queue and state', 'gauge')
     for (const [queue, counts] of Object.entries(snapshot.jobs)) {

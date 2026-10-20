@@ -64,10 +64,15 @@ const gatewayConfig = {
     ackTimeoutSeconds: 10,
 
     /**
-     * How long a device may hold a message before we assume it is lost. Must
-     * comfortably exceed the ack window plus the time an actual send takes.
+     * How long a device may hold a message after acknowledging it before we
+     * assume it is lost and send it elsewhere.
+     *
+     * Must outlast the device's own patience: the app waits up to three
+     * minutes for the radio's verdict before giving up on a send
+     * (`STUCK_JOB_MS` in GatewayService.kt). A shorter lease reclaims a
+     * message the phone may still send, and the customer gets it twice.
      */
-    leaseSeconds: 120,
+    leaseSeconds: 300,
 
     /**
      * How often expired leases and expired messages are swept up.
@@ -96,6 +101,44 @@ const gatewayConfig = {
      * to the phone, short enough that a leaked code is worthless tomorrow.
      */
     claimCodeTtlMinutes: 30,
+  },
+
+  routing: {
+    /**
+     * The zone the operators' day is counted in. Daily caps (distinct
+     * recipients, message quota) reset at midnight here, not at midnight UTC,
+     * which in Tashkent would be five in the morning.
+     */
+    billingTimezone: env.get('BILLING_TIMEZONE', 'Asia/Tashkent'),
+
+    /**
+     * How new recipients are spread over SIMs that still have allowance left.
+     *
+     * - `sequential` fills SIMs one after another, in fleet order: a new number
+     *   goes to the next SIM only once the previous one has reached its cap,
+     *   and waits for that SIM rather than opening a slot elsewhere. Keeps
+     *   spare SIMs untouched, at the cost of throughput, since one SIM paces
+     *   all new numbers.
+     * - `spread` lets every SIM with allowance take new numbers, which is
+     *   several times faster for the same total capacity.
+     *
+     * A number already allowed on a SIM today always goes back to that SIM in
+     * both modes: it costs no allowance there.
+     */
+    fillStrategy: env.get('ROUTING_FILL_STRATEGY', 'spread') as 'sequential' | 'spread',
+
+    /**
+     * Cap applied to a SIM whose operator is unknown. Conservative on purpose:
+     * guessing too high gets the SIM blocked, guessing too low only delays.
+     */
+    defaultDailyRecipientLimit: 60,
+
+    /**
+     * How long a message waits before looking again once every SIM has used
+     * up its allowance. Long enough not to spin for hours until midnight,
+     * short enough to pick up a newly connected device within minutes.
+     */
+    allowanceExhaustedRetrySeconds: 300,
   },
 } as const
 

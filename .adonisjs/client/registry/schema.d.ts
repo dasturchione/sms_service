@@ -43,6 +43,18 @@ export interface Registry {
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/sms/sms_controller').default['storeBatch']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
+  'sms.bulk': {
+    methods: ["POST"]
+    pattern: '/api/v1/sms/bulk'
+    types: {
+      body: ExtractBody<InferInput<(typeof import('#validators/sms').sendSmsBulkValidator)>>
+      paramsTuple: []
+      params: {}
+      query: ExtractQuery<InferInput<(typeof import('#validators/sms').sendSmsBulkValidator)>>
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/sms/sms_controller').default['storeBulk']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/sms/sms_controller').default['storeBulk']>>> | { status: 422; response: { errors: SimpleError[] } }
+    }
+  }
   'sms.index': {
     methods: ["GET","HEAD"]
     pattern: '/api/v1/sms'
@@ -175,6 +187,66 @@ export interface Registry {
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/webhooks/webhook_endpoints_controller').default['destroy']>>>
     }
   }
+  'devices.index': {
+    methods: ["GET","HEAD"]
+    pattern: '/api/v1/devices'
+    types: {
+      body: {}
+      paramsTuple: []
+      params: {}
+      query: {}
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['index']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['index']>>>
+    }
+  }
+  'devices.claim': {
+    methods: ["POST"]
+    pattern: '/api/v1/devices/claim'
+    types: {
+      body: ExtractBody<InferInput<(typeof import('#validators/device').claimDeviceValidator)>>
+      paramsTuple: []
+      params: {}
+      query: ExtractQuery<InferInput<(typeof import('#validators/device').claimDeviceValidator)>>
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['claim']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['claim']>>> | { status: 422; response: { errors: SimpleError[] } }
+    }
+  }
+  'devices.show': {
+    methods: ["GET","HEAD"]
+    pattern: '/api/v1/devices/:code'
+    types: {
+      body: {}
+      paramsTuple: [ParamValue]
+      params: { code: ParamValue }
+      query: {}
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['show']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['show']>>>
+    }
+  }
+  'devices.update': {
+    methods: ["PATCH"]
+    pattern: '/api/v1/devices/:code'
+    types: {
+      body: ExtractBody<InferInput<(typeof import('#validators/device').updateDeviceValidator)>>
+      paramsTuple: [ParamValue]
+      params: { code: ParamValue }
+      query: ExtractQuery<InferInput<(typeof import('#validators/device').updateDeviceValidator)>>
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['update']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['update']>>> | { status: 422; response: { errors: SimpleError[] } }
+    }
+  }
+  'devices.release': {
+    methods: ["POST"]
+    pattern: '/api/v1/devices/:code/release'
+    types: {
+      body: {}
+      paramsTuple: [ParamValue]
+      params: { code: ParamValue }
+      query: {}
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['release']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/devices/devices_controller').default['release']>>>
+    }
+  }
   'client.token.destroy': {
     methods: ["POST"]
     pattern: '/api/v1/auth/token/revoke'
@@ -197,18 +269,6 @@ export interface Registry {
       query: ExtractQuery<InferInput<(typeof import('#validators/gateway').registerGatewayValidator)>>
       response: ExtractResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_registration_controller').default['store']>>>
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_registration_controller').default['store']>>> | { status: 422; response: { errors: SimpleError[] } }
-    }
-  }
-  'gateway.claim': {
-    methods: ["POST"]
-    pattern: '/api/v1/gw/claim'
-    types: {
-      body: ExtractBody<InferInput<(typeof import('#validators/gateway').claimGatewayValidator)>>
-      paramsTuple: []
-      params: {}
-      query: ExtractQuery<InferInput<(typeof import('#validators/gateway').claimGatewayValidator)>>
-      response: ExtractResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_registration_controller').default['claim']>>>
-      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_registration_controller').default['claim']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
   'gateway.provision': {
@@ -245,18 +305,6 @@ export interface Registry {
       query: ExtractQuery<InferInput<(typeof import('#validators/gateway').reportResultsValidator)>>
       response: ExtractResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_provision_controller').default['reportResults']>>>
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/gateways/gateway_provision_controller').default['reportResults']>>> | { status: 422; response: { errors: SimpleError[] } }
-    }
-  }
-  'auth.new_account.store': {
-    methods: ["POST"]
-    pattern: '/api/v1/auth/signup'
-    types: {
-      body: ExtractBody<InferInput<(typeof import('#validators/user').signupValidator)>>
-      paramsTuple: []
-      params: {}
-      query: ExtractQuery<InferInput<(typeof import('#validators/user').signupValidator)>>
-      response: ExtractResponse<Awaited<ReturnType<import('#controllers/new_account_controller').default['store']>>>
-      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/new_account_controller').default['store']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
   'auth.access_tokens.store': {
@@ -391,6 +439,18 @@ export interface Registry {
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/tenants_controller').default['updateClient']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
+  'admin.clients.rotate_secret': {
+    methods: ["POST"]
+    pattern: '/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret'
+    types: {
+      body: {}
+      paramsTuple: [ParamValue, ParamValue]
+      params: { uid: ParamValue; clientUid: ParamValue }
+      query: {}
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/tenants_controller').default['rotateClientSecret']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/tenants_controller').default['rotateClientSecret']>>>
+    }
+  }
   'admin.webhooks.index': {
     methods: ["GET","HEAD"]
     pattern: '/api/v1/admin/tenants/:uid/webhooks'
@@ -499,6 +559,30 @@ export interface Registry {
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/explorer_controller').default['audit']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
+  'admin.allowances.index': {
+    methods: ["GET","HEAD"]
+    pattern: '/api/v1/admin/allowances'
+    types: {
+      body: {}
+      paramsTuple: []
+      params: {}
+      query: ExtractQueryForGet<InferInput<(typeof import('#validators/allowance').allowanceQueryValidator)>>
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/allowances_controller').default['index']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/allowances_controller').default['index']>>> | { status: 422; response: { errors: SimpleError[] } }
+    }
+  }
+  'admin.allowances.show': {
+    methods: ["GET","HEAD"]
+    pattern: '/api/v1/admin/allowances/:simUid'
+    types: {
+      body: {}
+      paramsTuple: [ParamValue]
+      params: { simUid: ParamValue }
+      query: ExtractQueryForGet<InferInput<(typeof import('#validators/allowance').allowanceQueryValidator)>>
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/allowances_controller').default['show']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/allowances_controller').default['show']>>> | { status: 422; response: { errors: SimpleError[] } }
+    }
+  }
   'admin.jobs.index': {
     methods: ["GET","HEAD"]
     pattern: '/api/v1/admin/jobs'
@@ -571,30 +655,6 @@ export interface Registry {
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['update']>>> | { status: 422; response: { errors: SimpleError[] } }
     }
   }
-  'admin.gateways.approve': {
-    methods: ["POST"]
-    pattern: '/api/v1/admin/gateways/:uid/approve'
-    types: {
-      body: {}
-      paramsTuple: [ParamValue]
-      params: { uid: ParamValue }
-      query: {}
-      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['approve']>>>
-      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['approve']>>>
-    }
-  }
-  'admin.gateways.claimCode': {
-    methods: ["POST"]
-    pattern: '/api/v1/admin/gateways/:uid/claim-code'
-    types: {
-      body: {}
-      paramsTuple: [ParamValue]
-      params: { uid: ParamValue }
-      query: {}
-      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['issueClaimCode']>>>
-      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['issueClaimCode']>>>
-    }
-  }
   'admin.gateways.diagnostics': {
     methods: ["GET","HEAD"]
     pattern: '/api/v1/admin/gateways/:uid/diagnostics'
@@ -629,6 +689,18 @@ export interface Registry {
       query: {}
       response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['disable']>>>
       errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['disable']>>>
+    }
+  }
+  'admin.gateways.destroy': {
+    methods: ["DELETE"]
+    pattern: '/api/v1/admin/gateways/:uid'
+    types: {
+      body: {}
+      paramsTuple: [ParamValue]
+      params: { uid: ParamValue }
+      query: {}
+      response: ExtractResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['destroy']>>>
+      errorResponse: ExtractErrorResponse<Awaited<ReturnType<import('#controllers/admin/gateways_controller').default['destroy']>>>
     }
   }
   'admin.operators.index': {

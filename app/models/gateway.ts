@@ -3,8 +3,9 @@ import { beforeCreate, belongsTo, hasMany } from '@adonisjs/lucid/orm'
 import type { BelongsTo, HasMany } from '@adonisjs/lucid/types/relations'
 import { DbAccessTokensProvider } from '@adonisjs/auth/access_tokens'
 import type { AccessToken } from '@adonisjs/auth/access_tokens'
-import { GatewayStatus } from '#enums/gateway_status'
+import { GatewayAssignment, GatewayStatus } from '#enums/gateway_status'
 import { generateUid } from '#utils/uid'
+import { formatDeviceCode } from '#utils/device_code'
 import SimProfile from '#models/sim_profile'
 import Tenant from '#models/tenant'
 
@@ -29,22 +30,30 @@ export default class Gateway extends GatewaySchema {
   declare simProfiles: HasMany<typeof SimProfile>
 
   /**
-   * A device only carries traffic once an operator has approved it and it is
-   * currently holding a socket.
+   * A device carries traffic only while it holds a socket, is in service, and
+   * has been given something to do.
    */
   get isDispatchable(): boolean {
-    return this.isActive && this.status === GatewayStatus.ONLINE
+    return (
+      this.isActive &&
+      this.status === GatewayStatus.ONLINE &&
+      this.assignment !== GatewayAssignment.UNASSIGNED
+    )
   }
 
-  get isApproved(): boolean {
-    return this.approvedAt !== null
+  get isPool(): boolean {
+    return this.assignment === GatewayAssignment.POOL
   }
 
   /**
-   * A shared pool device serves every tenant; a dedicated one serves exactly
-   * the tenant it was assigned to.
+   * One tenant's own phone, belonging to `tenantId`.
    */
-  servesTenant(tenantId: number): boolean {
-    return this.tenantId === null || this.tenantId === tenantId
+  isOwnedBy(tenantId: number): boolean {
+    return this.assignment === GatewayAssignment.TENANT && this.tenantId === tenantId
+  }
+
+  /** The code as people read it: `K7Q2-M9XD`. */
+  get displayCode(): string {
+    return formatDeviceCode(this.code)
   }
 }

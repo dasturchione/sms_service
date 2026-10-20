@@ -5,7 +5,6 @@ import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import SmsMessage from '#models/sms_message'
 import SmsEventLog from '#models/sms_event_log'
 import Operator from '#models/operator'
-import Gateway from '#models/gateway'
 import type ApiClient from '#models/api_client'
 import type Tenant from '#models/tenant'
 import AuditService from '#services/audit/audit_service'
@@ -23,6 +22,7 @@ import { SmsEvent } from '#enums/sms_event'
 import { WebhookEvent } from '#enums/webhook_event'
 import { CANCELLABLE_SMS_STATUSES, SmsPriority, SmsStatus } from '#enums/sms_status'
 import { ActorType, AuditAction } from '#enums/audit_action'
+import RequestedRoute, { type ResolvedRoute } from '#services/sms/requested_route'
 import { MAX_SEGMENTS } from '#validators/sms'
 import { generateUid } from '#utils/uid'
 
@@ -45,6 +45,10 @@ export type SendSmsInput = {
   priority?: 'high' | 'normal' | 'low'
   operator?: string
   gatewayUid?: string
+  /** One of the tenant's own devices, by its code. */
+  device?: string
+  /** A SIM slot on the requested device. */
+  slot?: number
   expiresIn?: number
   reference?: string
 }
@@ -89,10 +93,12 @@ type PendingBulkEntry = {
   bodyHash: string
   requestedOperatorId: number | null
   requestedGatewayId: number | null
+  requestedSlot: number | null
 }
 
 export type ListSmsFilters = {
   status?: SmsStatus
+  device?: string
   reference?: string
   recipient?: string
   from?: DateTime
@@ -139,7 +145,7 @@ export default class SmsService {
 
     const settings = tenant.resolvedSettings
     const requestedOperator = await this.resolveOperator(input.operator)
-    const requestedGateway = await this.resolveGateway(tenant.id, input.gatewayUid)
+    const requestedRoute = await RequestedRoute.resolve(tenant.id, input)
 
     const expiresInSeconds = input.expiresIn ?? settings.defaultExpiresInSeconds
     const now = DateTime.now()
@@ -165,7 +171,8 @@ export default class SmsService {
       attempts: 0,
       maxAttempts: settings.defaultMaxAttempts,
       requestedOperatorId: requestedOperator?.id ?? null,
-      requestedGatewayId: requestedGateway?.id ?? null,
+      requestedGatewayId: requestedRoute.gatewayId,
+      requestedSlot: requestedRoute.slot,
       expiresAt: expiresInSeconds > 0 ? now.plus({ seconds: expiresInSeconds }) : null,
       queuedAt: now,
     }
@@ -303,7 +310,7 @@ export default class SmsService {
      * its entries. Each distinct value is looked up once, not once per entry.
      */
     const operators = new Map<string, Promise<Operator | null>>()
-    const gateways = new Map<string, Promise<Gateway | null>>()
+    const routes = new Map<string, Promise<ResolvedRoute | Error>>()
 
     for (const [index, input] of messages.entries()) {
       const to = input.to.trim()
@@ -361,24 +368,25 @@ export default class SmsService {
         requestedOperatorId = operator.id
       }
 
-      let requestedGatewayId: number | null = null
-      if (input.gatewayUid) {
-        if (!gateways.has(input.gatewayUid)) {
-          gateways.set(
-            input.gatewayUid,
-            Gateway.query()
-              .where('uid', input.gatewayUid)
-              .where((builder) => builder.whereNull('tenant_id').orWhere('tenant_id', tenant.id))
-              .first()
-          )
-        }
-        const gateway = await gateways.get(input.gatewayUid)!
-        if (!gateway) {
-          reject(ErrorCode.GATEWAY_NOT_FOUND, `Unknown gateway "${input.gatewayUid}"`)
-          continue
-        }
-        requestedGatewayId = gateway.id
+      /**
+       * Resolved once per distinct request: a thousand entries naming the same
+       * phone and slot cost one lookup.
+       */
+      const routeKey = `${input.gatewayUid ?? ''}|${input.device ?? ''}|${input.slot ?? ''}`
+      if (!routes.has(routeKey)) {
+        routes.set(
+          routeKey,
+          RequestedRoute.resolve(tenant.id, input).catch((error: unknown) => error as Error)
+        )
       }
+      const route = await routes.get(routeKey)!
+      if (route instanceof Error) {
+        const domain = route as DomainException
+        reject((domain.code as ErrorCode) ?? ErrorCode.VALIDATION_FAILED, route.message)
+        continue
+      }
+      const requestedGatewayId = route.gatewayId
+      const requestedSlot = route.slot
 
       firstIndexByContent.set(contentKey, index)
 
@@ -397,6 +405,7 @@ export default class SmsService {
         bodyHash,
         requestedOperatorId,
         requestedGatewayId,
+        requestedSlot,
       })
     }
 
@@ -554,6 +563,7 @@ export default class SmsService {
         max_attempts: settings.defaultMaxAttempts,
         requested_operator_id: entry.requestedOperatorId,
         requested_gateway_id: entry.requestedGatewayId,
+        requested_slot: entry.requestedSlot,
         expires_at:
           expiresInSeconds > 0 ? now.plus({ seconds: expiresInSeconds }).toJSDate() : null,
         queued_at: nowSql,
@@ -639,6 +649,15 @@ export default class SmsService {
 
     if (filters.status) query.where('status', filters.status)
     if (filters.reference) query.where('reference', filters.reference)
+
+    if (filters.device) {
+      /**
+       * Messages to a tenant's own device always name it, so the request is
+       * the complete record of what went through that phone.
+       */
+      const route = await RequestedRoute.resolve(tenantId, { device: filters.device })
+      query.where('requested_gateway_id', route.gatewayId!)
+    }
     if (filters.recipient) {
       query.where('recipient_normalized', normalizePhoneNumber(filters.recipient).e164)
     }
@@ -765,26 +784,6 @@ export default class SmsService {
       })
     }
     return operator
-  }
-
-  /**
-   * A tenant may only pin a message to a device that actually serves it:
-   * either a shared pool device or one dedicated to that tenant.
-   */
-  private static async resolveGateway(tenantId: number, uid?: string): Promise<Gateway | null> {
-    if (!uid) return null
-
-    const gateway = await Gateway.query()
-      .where('uid', uid)
-      .where((builder) => builder.whereNull('tenant_id').orWhere('tenant_id', tenantId))
-      .first()
-
-    if (!gateway) {
-      throw new DomainException(ErrorCode.GATEWAY_NOT_FOUND, `Unknown gateway "${uid}"`, {
-        status: 422,
-      })
-    }
-    return gateway
   }
 
   private static isUniqueViolation(error: unknown): boolean {

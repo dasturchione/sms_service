@@ -11,6 +11,7 @@ export interface ApiDefinition {
   sms: {
     store: typeof routes['sms.store']
     batch: typeof routes['sms.batch']
+    bulk: typeof routes['sms.bulk']
     index: typeof routes['sms.index']
     show: typeof routes['sms.show']
     cancel: typeof routes['sms.cancel']
@@ -29,9 +30,15 @@ export interface ApiDefinition {
     update: typeof routes['webhooks.update']
     destroy: typeof routes['webhooks.destroy']
   }
+  devices: {
+    index: typeof routes['devices.index']
+    claim: typeof routes['devices.claim']
+    show: typeof routes['devices.show']
+    update: typeof routes['devices.update']
+    release: typeof routes['devices.release']
+  }
   gateway: {
     register: typeof routes['gateway.register']
-    claim: typeof routes['gateway.claim']
     provision: typeof routes['gateway.provision']
     sims: {
       sync: typeof routes['gateway.sims.sync']
@@ -39,9 +46,6 @@ export interface ApiDefinition {
     results: typeof routes['gateway.results']
   }
   auth: {
-    newAccount: {
-      store: typeof routes['auth.new_account.store']
-    }
     accessTokens: {
       store: typeof routes['auth.access_tokens.store']
     }
@@ -66,6 +70,7 @@ export interface ApiDefinition {
       index: typeof routes['admin.clients.index']
       store: typeof routes['admin.clients.store']
       update: typeof routes['admin.clients.update']
+      rotateSecret: typeof routes['admin.clients.rotate_secret']
     }
     webhooks: {
       index: typeof routes['admin.webhooks.index']
@@ -86,6 +91,10 @@ export interface ApiDefinition {
     audit: {
       index: typeof routes['admin.audit.index']
     }
+    allowances: {
+      index: typeof routes['admin.allowances.index']
+      show: typeof routes['admin.allowances.show']
+    }
     jobs: {
       index: typeof routes['admin.jobs.index']
       retry: typeof routes['admin.jobs.retry']
@@ -95,11 +104,10 @@ export interface ApiDefinition {
       index: typeof routes['admin.gateways.index']
       show: typeof routes['admin.gateways.show']
       update: typeof routes['admin.gateways.update']
-      approve: typeof routes['admin.gateways.approve']
-      claimCode: typeof routes['admin.gateways.claimCode']
       diagnostics: typeof routes['admin.gateways.diagnostics']
       enable: typeof routes['admin.gateways.enable']
       disable: typeof routes['admin.gateways.disable']
+      destroy: typeof routes['admin.gateways.destroy']
     }
     operators: {
       index: typeof routes['admin.operators.index']

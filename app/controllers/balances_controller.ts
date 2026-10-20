@@ -1,3 +1,6 @@
+import gatewayConfig from '#config/gateway'
+import { billingDate } from '#utils/billing_day'
+import RecipientAllowance from '#services/sms/recipient_allowance'
 import type { HttpContext } from '@adonisjs/core/http'
 import SimProfile from '#models/sim_profile'
 import Gateway from '#models/gateway'
@@ -27,9 +30,34 @@ export default class BalancesController {
       .where('is_active', true)
       .orderBy(['gateway_id', 'slot'])
 
+    const usageDate = billingDate()
+    const usage = await RecipientAllowance.usageBySim(
+      usageDate,
+      gatewayConfig.routing.defaultDailyRecipientLimit
+    )
+    const usageBySim = new Map(usage.map((entry) => [entry.simProfileId, entry]))
+
     return serialize.withoutWrapping({
-      data: SimProfileTransformer.transform(profiles),
+      data: profiles.map((profile) => {
+        const today = usageBySim.get(profile.id)
+
+        return {
+          ...new SimProfileTransformer(profile).toObject(),
+
+          /**
+           * How many different numbers this SIM can still reach today. The
+           * operator caps reach, not volume, so this is what actually limits a
+           * campaign to new customers.
+           */
+          recipientAllowance: {
+            limit: today?.limit ?? null,
+            used: today?.used ?? 0,
+            remaining: today?.remaining ?? null,
+          },
+        }
+      }),
       meta: {
+        allowanceDate: usageDate,
         /**
          * How many of those balances are actually known. A tenant seeing
          * nulls should be able to tell "nobody has asked yet" from "we asked
