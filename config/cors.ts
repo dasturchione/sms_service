@@ -10,7 +10,7 @@ const corsConfig = defineConfig({
   /**
    * Enable or disable CORS handling globally.
    */
-  enabled: true,
+  enabled: false,
 
   /**
    * Every origin is allowed, by decision: the API is called with bearer
@@ -38,7 +38,7 @@ const corsConfig = defineConfig({
   /**
    * Allow cookies/authorization headers on cross-origin requests.
    */
-  credentials: true,
+  credentials: false,
 
   /**
    * Cache CORS preflight response for N seconds.
