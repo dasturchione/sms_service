@@ -11,6 +11,10 @@ export const ClientAbility = {
   REPORT_READ: 'report:read',
   BALANCE_READ: 'balance:read',
   WEBHOOK_MANAGE: 'webhook:manage',
+  /** See the tenant's own phones and how they are doing. */
+  DEVICE_READ: 'device:read',
+  /** Claim, rename and release the tenant's own phones. */
+  DEVICE_MANAGE: 'device:manage',
 } as const
 
 export type ClientAbility = (typeof ClientAbility)[keyof typeof ClientAbility]
@@ -19,11 +23,20 @@ export const CLIENT_ABILITIES: readonly ClientAbility[] = Object.values(ClientAb
 
 /**
  * Default grant for a freshly created API client: it can send and inspect its
- * own traffic, nothing else.
+ * own traffic, and use its own phones. Reports, webhooks and cancelling are
+ * granted deliberately.
  */
 export const DEFAULT_CLIENT_ABILITIES: readonly ClientAbility[] = [
   ClientAbility.SMS_SEND,
   ClientAbility.SMS_READ,
+
+  /**
+   * Using one's own phone is part of the core offer, not an add-on, so a new
+   * client can claim and watch its devices from the start. A device can only
+   * ever carry its own tenant's messages, which keeps this safe to grant.
+   */
+  ClientAbility.DEVICE_READ,
+  ClientAbility.DEVICE_MANAGE,
 ]
 
 /**

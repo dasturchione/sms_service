@@ -16,7 +16,13 @@ router
   .group(() => {
     router
       .group(() => {
-        router.post('signup', [controllers.NewAccount, 'store'])
+        /**
+         * Sign in only. There is deliberately no self-signup: an account here
+         * can approve gateways and issue credentials that spend money on the
+         * platform's SIMs, so accounts are handed out by an existing operator
+         * through the back office, or bootstrapped on the server with
+         * `node ace staff:create`.
+         */
         router.post('login', [controllers.AccessTokens, 'store'])
       })
       .prefix('auth')
@@ -56,6 +62,12 @@ router
         router
           .patch('tenants/:uid/clients/:clientUid', [controllers.admin.Tenants, 'updateClient'])
           .as('admin.clients.update')
+        router
+          .post('tenants/:uid/clients/:clientUid/rotate-secret', [
+            controllers.admin.Tenants,
+            'rotateClientSecret',
+          ])
+          .as('admin.clients.rotate_secret')
 
         router
           .get('tenants/:uid/webhooks', [controllers.admin.Tenants, 'indexWebhooks'])
@@ -87,6 +99,17 @@ router
         router.get('audit', [controllers.admin.Explorer, 'audit']).as('admin.audit.index')
 
         /**
+         * Each SIM's daily allowance of distinct recipients: how much is used
+         * and which numbers it is serving today.
+         */
+        router
+          .get('allowances', [controllers.admin.Allowances, 'index'])
+          .as('admin.allowances.index')
+        router
+          .get('allowances/:simUid', [controllers.admin.Allowances, 'show'])
+          .as('admin.allowances.show')
+
+        /**
          * The background queue. A webhook that exhausted its attempts surfaces
          * nowhere else.
          */
@@ -108,12 +131,6 @@ router
         router.get(':uid', [controllers.admin.Gateways, 'show']).as('admin.gateways.show')
         router.patch(':uid', [controllers.admin.Gateways, 'update']).as('admin.gateways.update')
         router
-          .post(':uid/approve', [controllers.admin.Gateways, 'approve'])
-          .as('admin.gateways.approve')
-        router
-          .post(':uid/claim-code', [controllers.admin.Gateways, 'issueClaimCode'])
-          .as('admin.gateways.claimCode')
-        router
           .get(':uid/diagnostics', [controllers.admin.Fleet, 'diagnostics'])
           .as('admin.gateways.diagnostics')
         router
@@ -122,6 +139,7 @@ router
         router
           .post(':uid/disable', [controllers.admin.Gateways, 'disable'])
           .as('admin.gateways.disable')
+        router.delete(':uid', [controllers.admin.Gateways, 'destroy']).as('admin.gateways.destroy')
       })
       .prefix('admin/gateways')
       .use(middleware.platformAdmin())

@@ -70,6 +70,9 @@ export default class AdminOperatorsController {
       mnc: payload.mnc ?? null,
       phonePrefixes: payload.phonePrefixes ?? [],
       isActive: payload.isActive ?? true,
+      ...(payload.dailyRecipientLimit === undefined
+        ? {}
+        : { dailyRecipientLimit: payload.dailyRecipientLimit }),
     })
 
     await operator.refresh()
@@ -101,6 +104,9 @@ export default class AdminOperatorsController {
       ...(payload.mnc === undefined ? {} : { mnc: payload.mnc }),
       ...(payload.phonePrefixes === undefined ? {} : { phonePrefixes: payload.phonePrefixes }),
       ...(payload.isActive === undefined ? {} : { isActive: payload.isActive }),
+      ...(payload.dailyRecipientLimit === undefined
+        ? {}
+        : { dailyRecipientLimit: payload.dailyRecipientLimit }),
     })
 
     await operator.save()

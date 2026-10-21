@@ -6,6 +6,7 @@
 export const controllers = {
   AccessTokens: () => import('#controllers/access_tokens_controller'),
   admin: {
+    Allowances: () => import('#controllers/admin/allowances_controller'),
     Explorer: () => import('#controllers/admin/explorer_controller'),
     Fleet: () => import('#controllers/admin/fleet_controller'),
     Gateways: () => import('#controllers/admin/gateways_controller'),
@@ -20,12 +21,14 @@ export const controllers = {
     ClientTokens: () => import('#controllers/auth/client_tokens_controller'),
   },
   Balances: () => import('#controllers/balances_controller'),
+  devices: {
+    Devices: () => import('#controllers/devices/devices_controller'),
+  },
   gateways: {
     GatewayProvision: () => import('#controllers/gateways/gateway_provision_controller'),
     GatewayRegistration: () => import('#controllers/gateways/gateway_registration_controller'),
   },
   Health: () => import('#controllers/health_controller'),
-  NewAccount: () => import('#controllers/new_account_controller'),
   Profile: () => import('#controllers/profile_controller'),
   reports: {
     Reports: () => import('#controllers/reports/reports_controller'),

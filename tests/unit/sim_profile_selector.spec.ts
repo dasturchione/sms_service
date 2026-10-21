@@ -19,6 +19,11 @@ function candidate(overrides: Partial<RouteCandidate> = {}): RouteCandidate {
     smsBalance: null,
     successRate: 1,
     lastUsedAt: null,
+    availableNow: true,
+    availableAt: null,
+    holdsRecipient: false,
+    recipientLimit: 60,
+    recipientsUsed: 0,
     ...overrides,
   }
 }
@@ -90,5 +95,189 @@ test.group('sim profile selector ordering', () => {
     assert.isTrue(SimProfileSelector.isOnNet(beeline, '+998901234567'))
     assert.isFalse(SimProfileSelector.isOnNet(beeline, '+998931234567'))
     assert.isFalse(SimProfileSelector.isOnNet(candidate({ phonePrefixes: [] }), '+998901234567'))
+  })
+})
+
+/**
+ * The daily cap of distinct recipients per SIM. These cover the decision only;
+ * the functional suite covers the ledger and the atomic claim behind it.
+ */
+test.group('sim profile selector allowance plan', () => {
+  const NOW = DateTime.fromISO('2026-10-19T10:00:00Z')
+
+  function sim(id: number, overrides: Partial<RouteCandidate> = {}): RouteCandidate {
+    return candidate({
+      simProfileId: id,
+      simProfileUid: `sim_${id}`,
+      gatewayId: Math.ceil(id / 2),
+      slot: (id - 1) % 2,
+      ...overrides,
+    })
+  }
+
+  function tried(plan: ReturnType<typeof SimProfileSelector.plan>): number[] {
+    if (plan.kind !== 'try') throw new Error(`expected a try plan, got ${plan.kind}`)
+    return plan.candidates.map((c) => c.simProfileId)
+  }
+
+  test('sequential fills the first SIM in fleet order before the next', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(2, { recipientsUsed: 0 }), sim(1, { recipientsUsed: 10 })],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.deepEqual(tried(plan), [1])
+  })
+
+  /**
+   * "Slot 1 full, so the next number goes to slot 2": a full SIM is skipped,
+   * and only then does the next one in order take new numbers.
+   */
+  test('sequential moves to the next SIM once the first is full', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { recipientsUsed: 60, recipientLimit: 60 }), sim(2), sim(3)],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.deepEqual(tried(plan), [2])
+  })
+
+  /**
+   * The crux of the sequential strategy. Falling through to slot 2 just because
+   * slot 1 is paced for a few seconds would fill every SIM in parallel.
+   */
+  test('sequential waits for a busy SIM that still has room', ({ assert }) => {
+    const freeAt = NOW.plus({ seconds: 40 })
+    const plan = SimProfileSelector.plan(
+      [sim(1, { availableNow: false, availableAt: freeAt }), sim(2)],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.equal(plan.kind, 'wait')
+    if (plan.kind === 'wait') assert.equal(plan.until.toMillis(), freeAt.toMillis())
+  })
+
+  test('spread takes whichever SIM with room is free', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { availableNow: false, availableAt: NOW.plus({ seconds: 40 }) }), sim(2)],
+      RECIPIENT,
+      'spread',
+      NOW
+    )
+
+    assert.deepEqual(tried(plan), [2])
+  })
+
+  /**
+   * A number already allowed on a SIM costs nothing there. Sending it anywhere
+   * else would spend a second slot on the same person.
+   */
+  test('a SIM already holding the number wins, even over fleet order', ({ assert }) => {
+    for (const strategy of ['sequential', 'spread'] as const) {
+      const plan = SimProfileSelector.plan(
+        [sim(1), sim(2, { holdsRecipient: true })],
+        RECIPIENT,
+        strategy,
+        NOW
+      )
+
+      assert.deepEqual(tried(plan), [2], strategy)
+    }
+  })
+
+  test('a full SIM still takes numbers it already holds', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { recipientsUsed: 60, recipientLimit: 60, holdsRecipient: true })],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.deepEqual(tried(plan), [1])
+  })
+
+  test('the message waits for the SIM holding its number rather than spending another slot', ({
+    assert,
+  }) => {
+    const plan = SimProfileSelector.plan(
+      [
+        sim(1, {
+          holdsRecipient: true,
+          availableNow: false,
+          availableAt: NOW.plus({ seconds: 20 }),
+        }),
+        sim(2),
+      ],
+      RECIPIENT,
+      'spread',
+      NOW
+    )
+
+    assert.equal(plan.kind, 'wait')
+  })
+
+  test('every SIM full and none holding the number means exhausted', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { recipientsUsed: 60 }), sim(2, { recipientsUsed: 60 })],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.equal(plan.kind, 'exhausted')
+  })
+
+  test('no candidate at all is unavailable, not exhausted', ({ assert }) => {
+    assert.equal(SimProfileSelector.plan([], RECIPIENT, 'sequential', NOW).kind, 'unavailable')
+  })
+
+  test('a SIM without a cap never fills up', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { recipientLimit: null, recipientsUsed: 5000 })],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.deepEqual(tried(plan), [1])
+  })
+
+  /**
+   * A SIM busy because its in-flight slots are full has no known end, so the
+   * wait falls back to a short retry rather than a guess.
+   */
+  test('waiting on a SIM with no known free time retries shortly', ({ assert }) => {
+    const plan = SimProfileSelector.plan(
+      [sim(1, { availableNow: false, availableAt: null })],
+      RECIPIENT,
+      'sequential',
+      NOW
+    )
+
+    assert.equal(plan.kind, 'wait')
+    if (plan.kind === 'wait') {
+      const seconds = plan.until.diff(NOW, 'seconds').seconds
+      assert.isAtLeast(seconds, 1)
+      assert.isAtMost(seconds, 10)
+    }
+  })
+
+  test('fleet order is priority, then device, then slot', ({ assert }) => {
+    const ordered = [
+      sim(4, { gatewayId: 2, slot: 1 }),
+      sim(1, { gatewayId: 1, slot: 0, gatewayPriority: 200 }),
+      sim(3, { gatewayId: 2, slot: 0 }),
+    ].sort((a, b) => SimProfileSelector.compareFillOrder(a, b))
+
+    assert.deepEqual(
+      ordered.map((c) => c.simProfileId),
+      [3, 4, 1]
+    )
   })
 })

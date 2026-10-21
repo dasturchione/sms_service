@@ -23,10 +23,6 @@ export default class GatewayAuthMiddleware {
       })
     }
 
-    if (!gateway.isApproved) {
-      throw new DomainException(ErrorCode.FORBIDDEN, 'This device is not approved', { status: 403 })
-    }
-
     ctx.gateway = gateway
     return next()
   }

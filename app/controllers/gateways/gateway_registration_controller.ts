@@ -1,48 +1,57 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import { claimGatewayValidator, registerGatewayValidator } from '#validators/gateway'
+import { Secret } from '@adonisjs/core/helpers'
+import Gateway from '#models/gateway'
+import { registerGatewayValidator } from '#validators/gateway'
 import GatewayService from '#services/gateway/gateway_service'
 import GatewayTransformer from '#transformers/gateway_transformer'
+import { GatewayAbility } from '#enums/ability'
 
 /**
- * The unauthenticated half of device onboarding.
+ * Device onboarding.
  *
- * Both endpoints are open by necessity: a phone that has never been approved
- * has no credential to present. They are safe because neither grants anything.
- * Registering only queues a device for a human to look at, and claiming
- * requires a code that a human just issued.
+ * Open by necessity, since a new phone has no credential yet, and safe
+ * because registering grants nothing on its own: a new device carries no
+ * traffic until it is put into the pool or claimed by a tenant.
  */
 export default class GatewayRegistrationController {
   async store({ request, response, serialize }: HttpContext) {
     const payload = await request.validateUsing(registerGatewayValidator)
 
-    const gateway = await GatewayService.register(payload, request.ctx)
+    const { gateway, token } = await GatewayService.register(payload, {
+      presentedBy: await this.presentedDevice(request.header('authorization')),
+      ctx: request.ctx,
+    })
 
-    response.status(201)
+    response.status(token ? 201 : 200)
 
     return serialize({
       gateway: GatewayTransformer.transform(gateway),
+
       /**
-       * Spelled out because this is the entire onboarding instruction the app
-       * has to show its operator.
+       * Only on first registration. A refresh keeps the token the device
+       * already holds.
        */
-      nextStep: gateway.isApproved
-        ? 'Enter the claim code issued by an operator at /api/v1/gw/claim'
-        : 'Waiting for an operator to approve this device',
+      accessToken: token,
+      tokenType: token ? 'Bearer' : null,
+
+      /**
+       * The code the phone shows as a QR. A tenant claims the device with it,
+       * then names it when sending.
+       */
+      code: gateway.displayCode,
     })
   }
 
   /**
-   * Exchanges a one-time claim code for the device's long-lived token.
+   * The device a request proves to be, if it carries a valid device token.
+   * Lets a registered phone refresh its details without registering anew.
    */
-  async claim({ request, serialize }: HttpContext) {
-    const { deviceId, claimCode } = await request.validateUsing(claimGatewayValidator)
+  private async presentedDevice(header: string | undefined): Promise<Gateway | null> {
+    if (!header?.startsWith('Bearer ')) return null
 
-    const { gateway, token } = await GatewayService.claim(deviceId, claimCode)
+    const accessToken = await Gateway.accessTokens.verify(new Secret(header.slice(7).trim()))
+    if (!accessToken || !accessToken.allows(GatewayAbility.CONNECT)) return null
 
-    return serialize({
-      gateway: GatewayTransformer.transform(gateway),
-      accessToken: token,
-      tokenType: 'Bearer',
-    })
+    return Gateway.find(accessToken.tokenableId)
   }
 }

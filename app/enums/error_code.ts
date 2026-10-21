@@ -20,6 +20,17 @@ export const ErrorCode = {
   BLOCKED_RECIPIENT: 'BLOCKED_RECIPIENT',
   MESSAGE_EXPIRED: 'MESSAGE_EXPIRED',
   BODY_UNAVAILABLE: 'BODY_UNAVAILABLE',
+  /**
+   * The network accepted the message but its delivery report says the
+   * recipient never got it. Permanent: the operator already retried, and
+   * sending again would risk a duplicate if the report was wrong.
+   */
+  DELIVERY_FAILED: 'DELIVERY_FAILED',
+  /**
+   * An attempt that was overtaken by an earlier attempt's late success. The
+   * message already went out, so this one was called off.
+   */
+  SUPERSEDED: 'SUPERSEDED',
   CANCELLED_BY_CLIENT: 'CANCELLED_BY_CLIENT',
   ATTEMPTS_EXHAUSTED: 'ATTEMPTS_EXHAUSTED',
   /**
@@ -31,7 +42,25 @@ export const ErrorCode = {
 
   // Routing
   NO_GATEWAY_AVAILABLE: 'NO_GATEWAY_AVAILABLE',
+  /**
+   * Every eligible SIM has reached its daily cap of distinct recipients and
+   * none of them is already allowed to message this number. Not a failure: the
+   * message waits for a new device or for the next operator day.
+   */
+  RECIPIENT_ALLOWANCE_EXHAUSTED: 'RECIPIENT_ALLOWANCE_EXHAUSTED',
   GATEWAY_NOT_FOUND: 'GATEWAY_NOT_FOUND',
+  /**
+   * A device id that is already registered, presented without that device's
+   * token. Refused so knowing a phone's id is not enough to impersonate it.
+   */
+  DEVICE_ALREADY_REGISTERED: 'DEVICE_ALREADY_REGISTERED',
+  /** The device belongs to someone already; only its owner or staff can release it. */
+  DEVICE_ALREADY_CLAIMED: 'DEVICE_ALREADY_CLAIMED',
+  /**
+   * The message named a device that has since been released or reassigned,
+   * so nothing will ever carry it.
+   */
+  DEVICE_RELEASED: 'DEVICE_RELEASED',
   OPERATOR_NOT_FOUND: 'OPERATOR_NOT_FOUND',
 
   // Device level, transient
@@ -68,6 +97,9 @@ export const PERMANENT_ERROR_CODES: readonly ErrorCode[] = [
   ErrorCode.BLOCKED_RECIPIENT,
   ErrorCode.MESSAGE_EXPIRED,
   ErrorCode.BODY_UNAVAILABLE,
+  ErrorCode.DELIVERY_FAILED,
+  ErrorCode.SUPERSEDED,
+  ErrorCode.DEVICE_RELEASED,
   ErrorCode.CANCELLED_BY_CLIENT,
   ErrorCode.ATTEMPTS_EXHAUSTED,
 ]

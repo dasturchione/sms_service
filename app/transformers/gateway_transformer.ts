@@ -11,8 +11,23 @@ export default class GatewayTransformer extends BaseTransformer<Gateway> {
 
     return {
       uid: gateway.uid,
+
+      /**
+       * The code the phone shows as a QR, and the handle a tenant uses to
+       * claim the device and to send through it.
+       */
+      code: gateway.displayCode,
       name: gateway.name,
       status: gateway.status,
+
+      /**
+       * unassigned, pool or tenant: what this device is for.
+       */
+      assignment: gateway.assignment,
+      tenant:
+        gateway.assignment === 'tenant' && gateway.$preloaded.tenant
+          ? { uid: gateway.tenant.uid, name: gateway.tenant.name }
+          : null,
       isActive: gateway.isActive,
       priority: gateway.priority,
       maxInFlight: gateway.maxInFlight,
@@ -31,7 +46,6 @@ export default class GatewayTransformer extends BaseTransformer<Gateway> {
         signalLevel: gateway.signalLevel,
       },
 
-      approvedAt: gateway.approvedAt,
       lastSeenAt: gateway.lastSeenAt,
       lastConnectedAt: gateway.lastConnectedAt,
       createdAt: gateway.createdAt,

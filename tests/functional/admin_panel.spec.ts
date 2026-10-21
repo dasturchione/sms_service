@@ -165,6 +165,40 @@ test.group('admin tenants', () => {
 
     sendAfter.assertStatus(401)
   })
+
+  /**
+   * A leaked secret: the new one works, the old one does not, and neither
+   * does any token already exchanged for the old one.
+   */
+  test('rotating a secret replaces it and revokes live tokens', async ({ client, assert }) => {
+    const { bearer } = await createPlatformOperator()
+    const tenant = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
+
+    const rotated = await client
+      .post(`/api/v1/admin/tenants/${tenant.tenant.uid}/clients/${tenant.client.uid}/rotate-secret`)
+      .header('authorization', bearer)
+
+    rotated.assertStatus(200)
+    const body = rotated.body() as unknown as { clientSecret: string; data: { uid: string } }
+    assert.equal(body.data.uid, tenant.client.uid)
+    assert.notEqual(body.clientSecret, tenant.secret)
+
+    const oldToken = await client
+      .post('/api/v1/sms')
+      .header('authorization', tenant.bearer)
+      .json({ to: '901234567', message: 'kod' })
+    oldToken.assertStatus(401)
+
+    const oldSecret = await client
+      .post('/api/v1/auth/token')
+      .json({ clientId: tenant.client.clientId, clientSecret: tenant.secret })
+    oldSecret.assertStatus(401)
+
+    const newSecret = await client
+      .post('/api/v1/auth/token')
+      .json({ clientId: tenant.client.clientId, clientSecret: body.clientSecret })
+    newSecret.assertStatus(200)
+  })
 })
 
 test.group('admin explorer', () => {
@@ -312,5 +346,77 @@ test.group('admin overview', () => {
      * Nothing has settled yet, so a success rate would be a made up number.
      */
     assert.isNull(body.today.successRate)
+  })
+})
+
+/**
+ * There is no self-signup. An account here can approve gateways and issue
+ * credentials that spend money on the platform's SIMs, so it is handed out by
+ * an existing operator rather than claimed by whoever reaches the URL — which
+ * matters most when the API is exposed through a tunnel or a staging host.
+ */
+test.group('staff accounts', () => {
+  test('posting to the old signup path creates nothing', async ({ client, assert }) => {
+    const before = await db().from('users').count('* as total').first()
+
+    const response = await client.post('/api/v1/auth/signup').json({
+      fullName: 'Stranger',
+      email: 'stranger@example.com',
+      password: 'a-long-enough-password',
+      passwordConfirmation: 'a-long-enough-password',
+    })
+
+    assert.isAbove(response.status(), 399)
+
+    const after = await db().from('users').count('* as total').first()
+    assert.equal(Number(after!.total), Number(before!.total))
+  })
+
+  test('an operator creates another operator, who can then sign in', async ({ client, assert }) => {
+    const operator = await createPlatformOperator()
+
+    const created = await client
+      .post('/api/v1/admin/staff')
+      .header('authorization', operator.bearer)
+      .json({
+        fullName: 'Second Operator',
+        email: 'second@example.com',
+        password: 'a-long-enough-password',
+        role: UserRole.ADMIN,
+      })
+
+    created.assertStatus(201)
+
+    const signedIn = await client.post('/api/v1/auth/login').json({
+      email: 'second@example.com',
+      password: 'a-long-enough-password',
+    })
+
+    signedIn.assertStatus(200)
+
+    /**
+     * The new account is staff, not a tenant administrator: the absence of a
+     * tenant is what grants back office access, so it has to be absent.
+     */
+    const row = await db().from('users').where('email', 'second@example.com').first()
+    assert.isNull(row.tenant_id)
+
+    const reachable = await client
+      .get('/api/v1/admin/overview')
+      .header('authorization', `Bearer ${itemOf<{ token: string }>(signedIn).token}`)
+
+    reachable.assertStatus(200)
+  })
+
+  test('a tenant administrator cannot create an operator', async ({ client }) => {
+    const { tenant } = await createTestClient()
+    const bearer = await createTenantAdmin(tenant.id)
+
+    const response = await client
+      .post('/api/v1/admin/staff')
+      .header('authorization', bearer)
+      .json({ email: 'escalate@example.com', password: 'a-long-enough-password' })
+
+    response.assertStatus(403)
   })
 })

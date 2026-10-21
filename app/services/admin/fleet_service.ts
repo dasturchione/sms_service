@@ -11,6 +11,7 @@ export type SimUpdate = {
   isActive?: boolean
   smsPerMinute?: number
   dailyQuota?: number | null
+  dailyRecipientLimit?: number | null
   balanceCheckIntervalMin?: number
   /** Only ever set back to true: the device is what sets it to false. */
   ussdSupported?: boolean
@@ -46,6 +47,9 @@ export default class FleetService {
     if (input.isActive !== undefined) sim.isActive = input.isActive
     if (input.smsPerMinute !== undefined) sim.smsPerMinute = input.smsPerMinute
     if (input.dailyQuota !== undefined) sim.dailyQuota = input.dailyQuota
+    if (input.dailyRecipientLimit !== undefined) {
+      sim.dailyRecipientLimit = input.dailyRecipientLimit
+    }
     if (input.balanceCheckIntervalMin !== undefined) {
       sim.balanceCheckIntervalMin = input.balanceCheckIntervalMin
     }

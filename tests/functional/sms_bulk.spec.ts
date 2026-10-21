@@ -29,17 +29,31 @@ function entries(count: number) {
   }))
 }
 
+/**
+ * Posts a bulk request.
+ *
+ * The body is widened on the way in because the endpoint deliberately accepts
+ * the bare array as well as `{ messages: [...] }`, while the generated request
+ * type is derived from the validator and can only describe the envelope. The
+ * array form is part of the contract, so the tests exercise it rather than
+ * avoid it, and the mismatch is declared here once instead of at every call.
+ */
+function postBulk(client: any, bearer: string, body: unknown, idempotencyKey?: string) {
+  const request = client.post('/api/v1/sms/bulk').header('authorization', bearer)
+
+  if (idempotencyKey) request.header('idempotency-key', idempotencyKey)
+
+  return request.json(body as never)
+}
+
 test.group('POST /api/v1/sms/bulk', () => {
   test('queues each entry with its own text', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json([
-        { to: '+998921324567', message: "Sizning Test do'konidan 2000 so'm qarzingiz bor" },
-        { to: '+998911234567', message: "Sizning Test2 do'konidan 50 000 so'm qarzingiz bor" },
-      ])
+    const response = await postBulk(client, bearer, [
+      { to: '+998921324567', message: "Sizning Test do'konidan 2000 so'm qarzingiz bor" },
+      { to: '+998911234567', message: "Sizning Test2 do'konidan 50 000 so'm qarzingiz bor" },
+    ])
 
     response.assertStatus(202)
 
@@ -75,10 +89,7 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('also accepts the array under a messages key', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json({ messages: entries(2) })
+    const response = await postBulk(client, bearer, { messages: entries(2) })
 
     response.assertStatus(202)
     assert.equal((response.body() as BulkBody).meta.accepted, 2)
@@ -87,13 +98,10 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('keeps per entry options', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json([
-        { to: '901234567', message: 'a', reference: 'qarz-1', priority: 'high' },
-        { to: '901234568', message: 'b', reference: 'qarz-2', priority: 'low' },
-      ])
+    await postBulk(client, bearer, [
+      { to: '901234567', message: 'a', reference: 'qarz-1', priority: 'high' },
+      { to: '901234568', message: 'b', reference: 'qarz-2', priority: 'low' },
+    ])
 
     const rows = await db()
       .from('sms_messages')
@@ -113,7 +121,7 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('writes the created and queued events for every message', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    await client.post('/api/v1/sms/bulk').header('authorization', bearer).json(entries(2))
+    await postBulk(client, bearer, entries(2))
 
     const events = await db().from('sms_events').select('event')
     assert.equal(events.filter((row) => row.event === SmsEvent.CREATED).length, 2)
@@ -127,16 +135,13 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('rejects only the entries that are wrong', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json([
-        { to: '901234567', message: 'yaxshi' },
-        { to: '12345', message: 'yomon raqam' },
-        { to: '901234568', message: 'Ж'.repeat(1500) },
-        { to: '901234569', message: 'noma`lum operator', operator: 'yoq-operator' },
-        { to: '901234570', message: 'yana yaxshi' },
-      ])
+    const response = await postBulk(client, bearer, [
+      { to: '901234567', message: 'yaxshi' },
+      { to: '12345', message: 'yomon raqam' },
+      { to: '901234568', message: 'Ж'.repeat(1500) },
+      { to: '901234569', message: 'noma`lum operator', operator: 'yoq-operator' },
+      { to: '901234570', message: 'yana yaxshi' },
+    ])
 
     response.assertStatus(202)
 
@@ -164,14 +169,11 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('drops only an exact repeat of number and text', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json([
-        { to: '901234567', message: "Test do'koni: 2000 so'm" },
-        { to: '+998 90 123 45 67', message: "Test do'koni: 2000 so'm" },
-        { to: '901234567', message: "Test2 do'koni: 50 000 so'm" },
-      ])
+    const response = await postBulk(client, bearer, [
+      { to: '901234567', message: "Test do'koni: 2000 so'm" },
+      { to: '+998 90 123 45 67', message: "Test do'koni: 2000 so'm" },
+      { to: '901234567', message: "Test2 do'koni: 50 000 so'm" },
+    ])
 
     const body = response.body() as BulkBody
     assert.equal(body.meta.accepted, 2)
@@ -185,17 +187,9 @@ test.group('POST /api/v1/sms/bulk', () => {
 
     const payload = [...entries(2), { to: 'yomon', message: 'x' }]
 
-    const first = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .header('idempotency-key', 'bulk-1')
-      .json(payload)
+    const first = await postBulk(client, bearer, payload, 'bulk-1')
 
-    const second = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .header('idempotency-key', 'bulk-1')
-      .json(payload)
+    const second = await postBulk(client, bearer, payload, 'bulk-1')
 
     const firstBody = first.body() as BulkBody
     const secondBody = second.body() as BulkBody
@@ -217,17 +211,14 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('reports a conflict when a key is reused with another text', async ({ client, assert }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .header('idempotency-key', 'bulk-2')
-      .json([{ to: '901234567', message: 'birinchi' }])
+    await postBulk(client, bearer, [{ to: '901234567', message: 'birinchi' }], 'bulk-2')
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .header('idempotency-key', 'bulk-2')
-      .json([{ to: '901234567', message: 'ikkinchi' }])
+    const response = await postBulk(
+      client,
+      bearer,
+      [{ to: '901234567', message: 'ikkinchi' }],
+      'bulk-2'
+    )
 
     const body = response.body() as BulkBody
     assert.equal(body.data[0].error!.code, ErrorCode.IDEMPOTENCY_CONFLICT)
@@ -243,10 +234,7 @@ test.group('POST /api/v1/sms/bulk', () => {
       .where('id', apiClient.id)
       .update({ rate_limit_per_min: MAX_BULK_SIZE })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json(entries(MAX_BULK_SIZE))
+    const response = await postBulk(client, bearer, entries(MAX_BULK_SIZE))
 
     response.assertStatus(202)
     assert.equal((response.body() as BulkBody).meta.accepted, MAX_BULK_SIZE)
@@ -258,10 +246,7 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('refuses more entries than the limit', async ({ client }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json(entries(MAX_BULK_SIZE + 1))
+    const response = await postBulk(client, bearer, entries(MAX_BULK_SIZE + 1))
 
     response.assertStatus(422)
   })
@@ -269,10 +254,7 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('refuses an entry without a message', async ({ client }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_SEND] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json([{ to: '901234567' }])
+    const response = await postBulk(client, bearer, [{ to: '901234567' }])
 
     response.assertStatus(422)
   })
@@ -284,10 +266,7 @@ test.group('POST /api/v1/sms/bulk', () => {
 
     await db().from('api_clients').where('id', apiClient.id).update({ rate_limit_per_min: 2 })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json(entries(3))
+    const response = await postBulk(client, bearer, entries(3))
 
     response.assertStatus(429)
 
@@ -298,10 +277,7 @@ test.group('POST /api/v1/sms/bulk', () => {
   test('requires the send ability', async ({ client }) => {
     const { bearer } = await createTestClient({ abilities: [ClientAbility.SMS_READ] })
 
-    const response = await client
-      .post('/api/v1/sms/bulk')
-      .header('authorization', bearer)
-      .json(entries(1))
+    const response = await postBulk(client, bearer, entries(1))
 
     response.assertStatus(403)
   })

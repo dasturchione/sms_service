@@ -4,16 +4,29 @@ import logger from '@adonisjs/core/services/logger'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import SmsMessage from '#models/sms_message'
 import SmsAttempt from '#models/sms_attempt'
-import SimProfile from '#models/sim_profile'
 import SmsService from '#services/sms/sms_service'
 import WebhookService from '#services/webhooks/webhook_service'
 import { decideRetry } from '#services/sms/retry_policy'
+import RecipientAllowance from '#services/sms/recipient_allowance'
+import { billingDate } from '#utils/billing_day'
 import gatewayConfig from '#config/gateway'
 import { ErrorCode } from '#enums/error_code'
 import { SmsEvent } from '#enums/sms_event'
 import { isTerminalSmsStatus, SmsAttemptStatus, SmsStatus } from '#enums/sms_status'
 import { WebhookEvent } from '#enums/webhook_event'
-import type { SmsDeliveredPayload, SmsResultPayload } from '#realtime/protocol'
+import { ServerEvent, type SmsDeliveredPayload, type SmsResultPayload } from '#realtime/protocol'
+import connectionManager from '#realtime/connection_manager'
+
+/**
+ * A message together with the reporting device's own attempt at it.
+ */
+type OwnedMessage = {
+  message: SmsMessage
+  /** The reporting device's latest attempt at this message. */
+  attempt: SmsAttempt
+  /** That attempt is the one currently holding the message. */
+  isCurrent: boolean
+}
 
 /**
  * Applies what devices report back.
@@ -31,9 +44,10 @@ export default class SmsResultService {
    */
   static async acknowledge(gatewayId: number, jobId: string): Promise<void> {
     await db.transaction(async (trx) => {
-      const message = await this.lockOwnedMessage(gatewayId, jobId, trx)
-      if (!message || message.status !== SmsStatus.ASSIGNED) return
+      const owned = await this.lockOwnedMessage(gatewayId, jobId, trx)
+      if (!owned?.isCurrent || owned.message.status !== SmsStatus.ASSIGNED) return
 
+      const { message } = owned
       message.merge({
         status: SmsStatus.SENDING,
         leaseExpiresAt: DateTime.now().plus({ seconds: gatewayConfig.dispatch.leaseSeconds }),
@@ -46,38 +60,84 @@ export default class SmsResultService {
   }
 
   /**
-   * Terminal report from the device: the message was handed to the radio, or
-   * it failed.
+   * The radio's verdict on a send: handed to the network, or failed.
+   *
+   * Usually from the device currently holding the message. It can also be a
+   * late report about an earlier attempt, after the lease ran out and the
+   * message moved on. A late success is not thrown away: the message really
+   * did go out, and pretending otherwise is how a customer ends up with two
+   * copies while the panel says something else.
    */
   static async recordResult(gatewayId: number, payload: SmsResultPayload): Promise<void> {
     await db.transaction(async (trx) => {
-      const message = await this.lockOwnedMessage(gatewayId, payload.jobId, trx)
-      if (!message) return
+      const owned = await this.lockOwnedMessage(gatewayId, payload.jobId, trx)
+      if (!owned) return
 
-      /**
-       * A resend of a result we already applied. Accepting it again would
-       * corrupt counters and could resurrect a failed message.
-       */
-      if (isTerminalSmsStatus(message.status) || message.status === SmsStatus.SENT) {
+      if (payload.status === 'sent') {
+        await this.ensureSent(owned, gatewayId, payload, trx)
         return
       }
 
-      if (payload.status === 'sent') {
-        await this.applySuccess(message, gatewayId, payload, trx)
+      if (owned.isCurrent) {
+        await this.applyFailure(owned.message, gatewayId, payload, trx)
       } else {
-        await this.applyFailure(message, gatewayId, payload, trx)
+        await this.applyLateFailure(owned, gatewayId, payload, trx)
       }
     })
   }
 
   /**
-   * Optional delivery report. Only a message we already believe was sent can
-   * become delivered.
+   * The operator's status report: the message reached the handset, or it
+   * never will.
+   *
+   * A delivery report is proof the message was sent, so it is accepted even
+   * when the send result has not been applied yet (it was lost, or is still
+   * on its way). Before this, a report that overtook its own send result was
+   * silently dropped and the message sat at `sent` forever.
    */
   static async recordDelivered(gatewayId: number, payload: SmsDeliveredPayload): Promise<void> {
     await db.transaction(async (trx) => {
-      const message = await this.lockOwnedMessage(gatewayId, payload.jobId, trx)
-      if (!message || message.status !== SmsStatus.SENT) return
+      const owned = await this.lockOwnedMessage(gatewayId, payload.jobId, trx)
+      if (!owned) return
+
+      const { message } = owned
+      if (message.status === SmsStatus.DELIVERED) return
+
+      const failed = payload.status === 'failed'
+      if (
+        failed &&
+        message.status === SmsStatus.FAILED &&
+        message.errorCode === ErrorCode.DELIVERY_FAILED
+      ) {
+        return
+      }
+
+      await this.ensureSent(owned, gatewayId, { jobId: payload.jobId, status: 'sent' }, trx)
+
+      const statusCode = payload.statusCode ?? null
+
+      if (failed) {
+        message.merge({
+          status: SmsStatus.FAILED,
+          errorCode: ErrorCode.DELIVERY_FAILED,
+          errorMessage:
+            statusCode === null
+              ? 'The operator reported that the message was not delivered'
+              : `The operator reported that the message was not delivered (status ${statusCode})`,
+          failedAt: DateTime.now(),
+        })
+        await message.useTransaction(trx).save()
+
+        await SmsService.recordEvent(
+          message,
+          SmsEvent.DELIVERY_FAILED,
+          { statusCode },
+          gatewayId,
+          trx
+        )
+        await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_FAILED, { client: trx })
+        return
+      }
 
       message.merge({
         status: SmsStatus.DELIVERED,
@@ -85,7 +145,7 @@ export default class SmsResultService {
       })
       await message.useTransaction(trx).save()
 
-      await SmsService.recordEvent(message, SmsEvent.DELIVERED, null, gatewayId, trx)
+      await SmsService.recordEvent(message, SmsEvent.DELIVERED, { statusCode }, gatewayId, trx)
       await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_DELIVERED, { client: trx })
     })
   }
@@ -179,19 +239,64 @@ export default class SmsResultService {
     return expired
   }
 
-  private static async applySuccess(
-    message: SmsMessage,
+  /**
+   * Records that the reporting attempt put the message on the network.
+   *
+   * The one path for every kind of success: the current holder reporting,
+   * a late report about an earlier attempt, and a delivery report that
+   * arrives before its send result. Keeping them in one place is what keeps
+   * the counters, the allowance and the webhooks consistent between them.
+   */
+  private static async ensureSent(
+    owned: OwnedMessage,
     gatewayId: number,
     payload: SmsResultPayload,
     trx: TransactionClientContract
   ): Promise<void> {
-    const sentAt = this.parseInstant(payload.sentAt) ?? DateTime.now()
+    const { message, attempt } = owned
+
+    /**
+     * Already sent by some attempt. If this report is about a different
+     * attempt, a second copy went out: rare, unavoidable once two devices
+     * held the job, and worth recording rather than hiding.
+     */
+    if (this.wasSent(message)) {
+      if (attempt && attempt.status !== SmsAttemptStatus.SENT) {
+        await this.finishAttempt(attempt, trx, { status: SmsAttemptStatus.SENT })
+        await this.countSend(attempt.simProfileId, message.recipientNormalized, attempt, trx)
+        await SmsService.recordEvent(
+          message,
+          SmsEvent.SENT,
+          { duplicate: true, attempt: attempt.attemptNo },
+          gatewayId,
+          trx
+        )
+        logger.warn({ smsUid: message.uid, gatewayId }, 'a second copy of a message was sent')
+      }
+      return
+    }
+
+    /**
+     * A late success from an earlier attempt while a newer one is still in
+     * flight elsewhere: call the newer one off before it sends a duplicate.
+     */
+    if (attempt && !owned.isCurrent) {
+      await this.supersedeCurrentAttempt(message, attempt, trx)
+    }
+
+    if (attempt) {
+      message.simProfileId = attempt.simProfileId
+      message.assignedAt = attempt.startedAt
+      await this.finishAttempt(attempt, trx, { status: SmsAttemptStatus.SENT })
+    }
 
     message.merge({
       status: SmsStatus.SENT,
-      sentAt,
-      providerMessageId: payload.providerMessageId ?? null,
+      sentAt: this.parseInstant(payload.sentAt) ?? message.sentAt ?? DateTime.now(),
+      providerMessageId: payload.providerMessageId ?? message.providerMessageId ?? null,
       leaseExpiresAt: null,
+      nextAttemptAt: null,
+      failedAt: null,
       errorCode: null,
       errorMessage: null,
       /**
@@ -203,20 +308,107 @@ export default class SmsResultService {
     })
     await message.useTransaction(trx).save()
 
-    await this.updateCurrentAttempt(message, trx, { status: SmsAttemptStatus.SENT })
     await SmsService.recordEvent(
       message,
       SmsEvent.SENT,
-      { providerMessageId: payload.providerMessageId ?? null },
+      {
+        providerMessageId: payload.providerMessageId ?? null,
+        ...(owned.isCurrent ? {} : { late: true }),
+      },
       gatewayId,
       trx
     )
 
-    if (message.simProfileId) {
-      await this.countAgainstDailyQuota(message.simProfileId, trx)
+    await this.countSend(message.simProfileId, message.recipientNormalized, attempt, trx)
+    await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_SENT, { client: trx })
+  }
+
+  /**
+   * Whether the message is already known to have left a SIM. A failed
+   * delivery counts: the network took the message, it just did not arrive.
+   * Without that, a resent `sent` result (its acknowledgement lost to a
+   * dropped link) would turn a `DELIVERY_FAILED` message back into `sent`.
+   */
+  private static wasSent(message: SmsMessage): boolean {
+    return (
+      message.status === SmsStatus.SENT ||
+      message.status === SmsStatus.DELIVERED ||
+      (message.status === SmsStatus.FAILED && message.errorCode === ErrorCode.DELIVERY_FAILED)
+    )
+  }
+
+  /**
+   * Counts one message that actually left a SIM: the daily message quota and
+   * the distinct-recipient ledger. The ledger day is the day the slot was
+   * claimed, i.e. when the attempt started, so a result arriving just after
+   * midnight still lands on yesterday's slot.
+   */
+  private static async countSend(
+    simProfileId: number | null,
+    recipient: string,
+    attempt: SmsAttempt | null,
+    trx: TransactionClientContract
+  ): Promise<void> {
+    if (!simProfileId) return
+
+    await this.countAgainstDailyQuota(simProfileId, trx)
+    await RecipientAllowance.recordSent(
+      trx,
+      simProfileId,
+      recipient,
+      billingDate(attempt?.startedAt ?? DateTime.now())
+    )
+  }
+
+  /**
+   * Calls off the attempt currently holding a message, because an earlier
+   * attempt turned out to have sent it after all.
+   *
+   * The device is told to drop the job. That is best effort: if it already
+   * handed it to the radio, its own result will come back and be recorded as
+   * a duplicate. Its allowance slot is returned unless something was
+   * actually sent through it.
+   */
+  private static async supersedeCurrentAttempt(
+    message: SmsMessage,
+    reporting: SmsAttempt,
+    trx: TransactionClientContract
+  ): Promise<void> {
+    if (message.status !== SmsStatus.ASSIGNED && message.status !== SmsStatus.SENDING) return
+
+    const current = await SmsAttempt.query({ client: trx })
+      .where('sms_message_id', String(message.id))
+      .where('attempt_no', message.attempts)
+      .first()
+
+    if (!current || current.id === reporting.id) return
+
+    await this.finishAttempt(current, trx, {
+      status: SmsAttemptStatus.FAILED,
+      errorCode: ErrorCode.SUPERSEDED,
+      errorMessage: `Attempt ${reporting.attemptNo} was confirmed sent after this one started`,
+    })
+
+    if (current.simProfileId) {
+      await RecipientAllowance.release(trx, {
+        simProfileId: current.simProfileId,
+        recipient: message.recipientNormalized,
+        usageDate: billingDate(current.startedAt),
+        exceptMessageId: message.id,
+      })
     }
 
-    await WebhookService.publishSmsEvent(message, WebhookEvent.SMS_SENT, { client: trx })
+    if (current.gatewayId) {
+      connectionManager.get(current.gatewayId)?.send(ServerEvent.SMS_CANCEL, { jobId: message.uid })
+    }
+
+    await SmsService.recordEvent(
+      message,
+      SmsEvent.SUPERSEDED,
+      { cancelledAttempt: current.attemptNo, confirmedAttempt: reporting.attemptNo },
+      current.gatewayId,
+      trx
+    )
   }
 
   private static async applyFailure(
@@ -226,7 +418,7 @@ export default class SmsResultService {
     trx: TransactionClientContract
   ): Promise<void> {
     const errorCode = this.normalizeErrorCode(payload.errorCode)
-    const errorMessage = payload.errorMessage?.slice(0, 500) ?? null
+    const errorMessage = this.describeFailure(payload)
 
     await this.updateCurrentAttempt(message, trx, {
       status: SmsAttemptStatus.FAILED,
@@ -237,12 +429,75 @@ export default class SmsResultService {
     await SmsService.recordEvent(
       message,
       SmsEvent.FAILED,
-      { errorCode, errorMessage },
+      {
+        errorCode,
+        errorMessage,
+        platformResult: payload.platformResult ?? null,
+        radioErrorCode: payload.radioErrorCode ?? null,
+      },
       gatewayId,
       trx
     )
 
     await this.retryOrFail(message, errorCode, errorMessage, trx)
+  }
+
+  /**
+   * A failure reported about an attempt that no longer holds the message.
+   * The attempt's own record is completed, so its history is accurate, but
+   * the message is governed by whichever attempt holds it now.
+   */
+  private static async applyLateFailure(
+    owned: OwnedMessage,
+    gatewayId: number,
+    payload: SmsResultPayload,
+    trx: TransactionClientContract
+  ): Promise<void> {
+    const { message, attempt } = owned
+    if (!attempt || attempt.status === SmsAttemptStatus.SENT) return
+    if (attempt.status === SmsAttemptStatus.FAILED) return
+
+    const errorCode = this.normalizeErrorCode(payload.errorCode)
+    const errorMessage = this.describeFailure(payload)
+
+    await this.finishAttempt(attempt, trx, {
+      status: SmsAttemptStatus.FAILED,
+      errorCode,
+      errorMessage,
+    })
+
+    await SmsService.recordEvent(
+      message,
+      SmsEvent.FAILED,
+      {
+        errorCode,
+        errorMessage,
+        late: true,
+        attempt: attempt.attemptNo,
+        platformResult: payload.platformResult ?? null,
+        radioErrorCode: payload.radioErrorCode ?? null,
+      },
+      gatewayId,
+      trx
+    )
+  }
+
+  /**
+   * The device's own words, with the platform's codes attached when they add
+   * something. Support reads this; the error code is for machines.
+   */
+  private static describeFailure(payload: SmsResultPayload): string | null {
+    const base = payload.errorMessage?.slice(0, 400) ?? null
+    const codes: string[] = []
+    if (payload.platformResult !== undefined && payload.platformResult !== null) {
+      codes.push(`result ${payload.platformResult}`)
+    }
+    if (payload.radioErrorCode !== undefined && payload.radioErrorCode !== null) {
+      codes.push(`radio ${payload.radioErrorCode}`)
+    }
+
+    if (codes.length === 0) return base
+    return `${base ?? 'Send failed'} [${codes.join(', ')}]`
   }
 
   /**
@@ -254,6 +509,21 @@ export default class SmsResultService {
     errorMessage: string | null,
     trx: TransactionClientContract
   ): Promise<void> {
+    /**
+     * Device failures and expired leases both end up here, before the SIM is
+     * forgotten, which makes this the one place an unused allowance slot is
+     * handed back. Whether the message is retried or failed for good, a slot
+     * that never carried a message to the network should not stay spent.
+     */
+    if (message.simProfileId && message.assignedAt) {
+      await RecipientAllowance.release(trx, {
+        simProfileId: message.simProfileId,
+        recipient: message.recipientNormalized,
+        usageDate: billingDate(message.assignedAt),
+        exceptMessageId: message.id,
+      })
+    }
+
     const decision = decideRetry({
       errorCode,
       attempts: message.attempts,
@@ -305,16 +575,19 @@ export default class SmsResultService {
   }
 
   /**
-   * Loads a message and proves the reporting device is the one holding it.
+   * Loads a message and proves the reporting device took part in it.
    *
-   * The join through `sim_profiles` is the ownership check: a device can only
-   * ever speak about messages assigned to one of its own SIM slots.
+   * Ownership is decided by attempts, not by which SIM holds the message
+   * right now: a device reporting on an attempt it really made is telling the
+   * truth even after the message moved on. A device with no attempt at all
+   * is refused, so a compromised phone still cannot speak about another
+   * device's traffic.
    */
   private static async lockOwnedMessage(
     gatewayId: number,
     jobId: string,
     trx: TransactionClientContract
-  ): Promise<SmsMessage | null> {
+  ): Promise<OwnedMessage | null> {
     const message = await SmsMessage.query({ client: trx }).where('uid', jobId).forUpdate().first()
 
     if (!message) {
@@ -322,19 +595,43 @@ export default class SmsResultService {
       return null
     }
 
-    if (message.simProfileId === null) return null
-
-    const owns = await SimProfile.query({ client: trx })
-      .where('id', message.simProfileId)
+    const attempt = await SmsAttempt.query({ client: trx })
+      .where('sms_message_id', String(message.id))
       .where('gateway_id', gatewayId)
+      .orderBy('attempt_no', 'desc')
       .first()
 
-    if (!owns) {
-      logger.warn({ gatewayId, jobId }, 'gateway reported on a job it does not hold')
+    if (!attempt) {
+      logger.warn({ gatewayId, jobId }, 'gateway reported on a job it never held')
       return null
     }
 
-    return message
+    const isCurrent =
+      attempt.attemptNo === message.attempts &&
+      message.simProfileId === attempt.simProfileId &&
+      (message.status === SmsStatus.ASSIGNED || message.status === SmsStatus.SENDING)
+
+    return { message, attempt, isCurrent }
+  }
+
+  private static async finishAttempt(
+    attempt: SmsAttempt,
+    trx: TransactionClientContract,
+    values: {
+      status: SmsAttemptStatus
+      errorCode?: ErrorCode | null
+      errorMessage?: string | null
+    }
+  ): Promise<void> {
+    const now = DateTime.now()
+    attempt.merge({
+      status: values.status,
+      errorCode: values.errorCode ?? null,
+      errorMessage: values.errorMessage ?? null,
+      finishedAt: now,
+      durationMs: Math.max(0, now.toMillis() - attempt.startedAt.toMillis()),
+    })
+    await attempt.useTransaction(trx).save()
   }
 
   private static async updateCurrentAttempt(
@@ -367,21 +664,27 @@ export default class SmsResultService {
   /**
    * Advances the per SIM daily counter, resetting it when the date rolled over
    * since the last send.
+   *
+   * The date is the operator's, passed in, not the database's `current_date`,
+   * which follows the server's UTC clock and would reset the counter at five
+   * in the morning in Tashkent.
    */
   private static async countAgainstDailyQuota(
     simProfileId: number,
     trx: TransactionClientContract
   ): Promise<void> {
+    const today = billingDate()
+
     await trx.rawQuery(
       `UPDATE sim_profiles
           SET sent_today = CASE
-                WHEN counter_date IS DISTINCT FROM current_date THEN 1
+                WHEN counter_date IS DISTINCT FROM ?::date THEN 1
                 ELSE sent_today + 1
               END,
-              counter_date = current_date,
+              counter_date = ?::date,
               updated_at = now()
         WHERE id = ?`,
-      [simProfileId]
+      [today, today, simProfileId]
     )
   }
 

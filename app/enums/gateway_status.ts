@@ -1,7 +1,7 @@
 export const GatewayStatus = {
   /**
-   * Registered by the device but not yet approved by an operator. A gateway
-   * in this state has no token and cannot carry traffic.
+   * Kept for rows written before approval was removed. New devices never
+   * enter this state.
    */
   PENDING_APPROVAL: 'pending_approval',
   OFFLINE: 'offline',
@@ -36,3 +36,24 @@ export const SimState = {
 } as const
 
 export type SimState = (typeof SimState)[keyof typeof SimState]
+
+/**
+ * Whose traffic a device carries.
+ *
+ * Devices register and connect on their own, and start out unassigned:
+ * connected, visible, but carrying nothing until someone decides what they
+ * are for. That decision is this value, not a separate approval step.
+ */
+export const GatewayAssignment = {
+  /** Waiting to be claimed by a tenant or put into the pool by an operator. */
+  UNASSIGNED: 'unassigned',
+  /** The platform's shared fleet, routed to automatically for every tenant. */
+  POOL: 'pool',
+  /**
+   * A tenant's own phone. Used only for that tenant, and only when a message
+   * names it; never for anyone else's traffic and never by automatic routing.
+   */
+  TENANT: 'tenant',
+} as const
+
+export type GatewayAssignment = (typeof GatewayAssignment)[keyof typeof GatewayAssignment]

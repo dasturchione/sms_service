@@ -15,11 +15,6 @@ export const registerGatewayValidator = vine.create({
   appVersion: vine.string().trim().maxLength(32).optional(),
 })
 
-export const claimGatewayValidator = vine.create({
-  deviceId: vine.string().trim().minLength(8).maxLength(128),
-  claimCode: vine.string().trim().minLength(8).maxLength(64),
-})
-
 /**
  * The SIM slots a device reports. Subscriber identifiers arrive in the clear
  * here and are hashed before storage.
@@ -57,6 +52,13 @@ export const reportResultsValidator = vine.create({
         errorCode: vine.string().trim().maxLength(48).nullable().optional(),
         errorMessage: vine.string().trim().maxLength(500).nullable().optional(),
         sentAt: vine.string().trim().maxLength(40).nullable().optional(),
+
+        /**
+         * The platform's own codes behind a failure, passed through verbatim
+         * so the panel shows what the phone saw.
+         */
+        platformResult: vine.number().withoutDecimals().nullable().optional(),
+        radioErrorCode: vine.number().withoutDecimals().nullable().optional(),
       })
     )
     .minLength(1)

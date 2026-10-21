@@ -1,5 +1,4 @@
 import { test } from '@japa/runner'
-import { DateTime } from 'luxon'
 import { createTestClient, collectionOf, itemOf } from '#tests/helpers'
 import { createApprovedGateway, createPlatformOperator } from '#tests/gateway_helpers'
 import { db } from '#tests/db'
@@ -9,65 +8,6 @@ import JobQueue from '#services/infra/job_queue'
 import { JobQueueName, JobStatus } from '#enums/job'
 import { SmsStatus } from '#enums/sms_status'
 import { ErrorCode } from '#enums/error_code'
-
-test.group('admin claim codes', () => {
-  /**
-   * The case this exists for: a phone was approved, nobody typed the code in
-   * within its half hour, and the device now sits there permanently unable to
-   * connect. Approval did not expire — the code did.
-   */
-  test('issues a fresh code for an already approved device', async ({ client, assert }) => {
-    const { bearer } = await createPlatformOperator()
-    const { gateway } = await createApprovedGateway()
-
-    await db()
-      .from('gateways')
-      .where('id', gateway.id)
-      .update({ claim_code_expires_at: DateTime.now().minus({ hours: 2 }).toSQL() })
-
-    const response = await client
-      .post(`/api/v1/admin/gateways/${gateway.uid}/claim-code`)
-      .header('authorization', bearer)
-
-    response.assertStatus(200)
-
-    const claimCode = (response.body() as unknown as { data: { claimCode: string } }).data.claimCode
-
-    const claimed = await client
-      .post('/api/v1/gw/claim')
-      .json({ deviceId: gateway.deviceId, claimCode })
-
-    claimed.assertStatus(200)
-    assert.isString(
-      (claimed.body() as unknown as { data: { accessToken: string } }).data.accessToken
-    )
-  })
-
-  /**
-   * Safe to press twice: issuing invalidates whatever came before, so a
-   * second code cannot leave two valid ones in the wild.
-   */
-  test('a new code voids the previous one', async ({ client }) => {
-    const { bearer } = await createPlatformOperator()
-    const { gateway } = await createApprovedGateway()
-
-    const first = await client
-      .post(`/api/v1/admin/gateways/${gateway.uid}/claim-code`)
-      .header('authorization', bearer)
-
-    await client
-      .post(`/api/v1/admin/gateways/${gateway.uid}/claim-code`)
-      .header('authorization', bearer)
-
-    const stale = (first.body() as unknown as { data: { claimCode: string } }).data.claimCode
-
-    const claimed = await client
-      .post('/api/v1/gw/claim')
-      .json({ deviceId: gateway.deviceId, claimCode: stale })
-
-    claimed.assertStatus(403)
-  })
-})
 
 test.group('admin SIM settings', () => {
   test('changes pacing and quota', async ({ client, assert }) => {
@@ -150,12 +90,12 @@ test.group('admin diagnostics', () => {
     ).data
 
     /**
-     * Approval is itself an event, so a freshly enrolled device already has a
-     * history worth showing.
+     * Registration is itself an event, so a freshly enrolled device already
+     * has a history worth showing.
      */
     assert.includeMembers(
       body.events.map((event) => event.event),
-      ['approved']
+      ['registration.created']
     )
     assert.isArray(body.sessions)
     assert.isArray(body.ussd)

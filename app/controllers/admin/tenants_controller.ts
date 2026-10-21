@@ -118,6 +118,32 @@ export default class AdminTenantsController {
     })
   }
 
+  /**
+   * Issues a new secret for an existing client and revokes its tokens. Like
+   * creation, the response is the only place the secret is ever readable.
+   */
+  async rotateClientSecret({ auth, params, request, serialize }: HttpContext) {
+    const tenant = await TenantService.findByUid(params.uid)
+    const { client, clientSecret } = await TenantService.rotateClientSecret(
+      tenant.id,
+      params.clientUid
+    )
+
+    await AuditService.record({
+      action: AuditAction.API_CLIENT_SECRET_ROTATED,
+      actor: this.actor(auth),
+      tenantId: tenant.id,
+      resourceType: 'api_client',
+      resourceId: client.uid,
+      ctx: request.ctx,
+    })
+
+    return serialize.withoutWrapping({
+      data: ApiClientTransformer.transform(client),
+      clientSecret,
+    })
+  }
+
   async updateClient({ auth, params, request, serialize }: HttpContext) {
     const payload = await request.validateUsing(updateApiClientValidator)
     const tenant = await TenantService.findByUid(params.uid)

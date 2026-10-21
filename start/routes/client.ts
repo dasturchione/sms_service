@@ -101,6 +101,40 @@ router
       .use(middleware.clientAuth())
       .use(middleware.abilities([ClientAbility.WEBHOOK_MANAGE]))
 
+    /**
+     * The tenant's own phones: claim one by the code on its screen, watch it,
+     * and give it back.
+     */
+    router
+      .group(() => {
+        router
+          .get('/', [controllers.devices.Devices, 'index'])
+          .as('devices.index')
+          .use(middleware.abilities([ClientAbility.DEVICE_READ]))
+
+        router
+          .post('claim', [controllers.devices.Devices, 'claim'])
+          .as('devices.claim')
+          .use(middleware.abilities([ClientAbility.DEVICE_MANAGE]))
+
+        router
+          .get(':code', [controllers.devices.Devices, 'show'])
+          .as('devices.show')
+          .use(middleware.abilities([ClientAbility.DEVICE_READ]))
+
+        router
+          .patch(':code', [controllers.devices.Devices, 'update'])
+          .as('devices.update')
+          .use(middleware.abilities([ClientAbility.DEVICE_MANAGE]))
+
+        router
+          .post(':code/release', [controllers.devices.Devices, 'release'])
+          .as('devices.release')
+          .use(middleware.abilities([ClientAbility.DEVICE_MANAGE]))
+      })
+      .prefix('devices')
+      .use(middleware.clientAuth())
+
     router
       .post('auth/token/revoke', [controllers.auth.ClientTokens, 'destroy'])
       .as('client.token.destroy')

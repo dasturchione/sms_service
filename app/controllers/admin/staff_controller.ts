@@ -33,11 +33,11 @@ export default class AdminStaffController {
     const user = await StaffService.create(payload)
 
     await AuditService.record({
-      action: AuditAction.TENANT_UPDATED,
+      action: AuditAction.STAFF_CREATED,
       actor: { type: ActorType.USER, id: actor.id, label: actor.email },
       resourceType: 'user',
       resourceId: user.uid ?? user.email,
-      metadata: { created: true, email: user.email, role: user.role },
+      metadata: { email: user.email, role: user.role },
       ctx: request.ctx,
     })
 
@@ -53,7 +53,7 @@ export default class AdminStaffController {
     const user = await StaffService.setActive(params.uid, isActive, actor.id)
 
     await AuditService.record({
-      action: AuditAction.TENANT_UPDATED,
+      action: AuditAction.STAFF_UPDATED,
       actor: { type: ActorType.USER, id: actor.id, label: actor.email },
       resourceType: 'user',
       resourceId: user.uid ?? user.email,

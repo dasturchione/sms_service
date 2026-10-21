@@ -24,6 +24,12 @@ const routes = {
     tokens: [{"old":"/api/v1/sms/batch","type":0,"val":"api","end":""},{"old":"/api/v1/sms/batch","type":0,"val":"v1","end":""},{"old":"/api/v1/sms/batch","type":0,"val":"sms","end":""},{"old":"/api/v1/sms/batch","type":0,"val":"batch","end":""}],
     types: placeholder as Registry['sms.batch']['types'],
   },
+  'sms.bulk': {
+    methods: ["POST"],
+    pattern: '/api/v1/sms/bulk',
+    tokens: [{"old":"/api/v1/sms/bulk","type":0,"val":"api","end":""},{"old":"/api/v1/sms/bulk","type":0,"val":"v1","end":""},{"old":"/api/v1/sms/bulk","type":0,"val":"sms","end":""},{"old":"/api/v1/sms/bulk","type":0,"val":"bulk","end":""}],
+    types: placeholder as Registry['sms.bulk']['types'],
+  },
   'sms.index': {
     methods: ["GET","HEAD"],
     pattern: '/api/v1/sms',
@@ -90,6 +96,36 @@ const routes = {
     tokens: [{"old":"/api/v1/webhooks/:uid","type":0,"val":"api","end":""},{"old":"/api/v1/webhooks/:uid","type":0,"val":"v1","end":""},{"old":"/api/v1/webhooks/:uid","type":0,"val":"webhooks","end":""},{"old":"/api/v1/webhooks/:uid","type":1,"val":"uid","end":""}],
     types: placeholder as Registry['webhooks.destroy']['types'],
   },
+  'devices.index': {
+    methods: ["GET","HEAD"],
+    pattern: '/api/v1/devices',
+    tokens: [{"old":"/api/v1/devices","type":0,"val":"api","end":""},{"old":"/api/v1/devices","type":0,"val":"v1","end":""},{"old":"/api/v1/devices","type":0,"val":"devices","end":""}],
+    types: placeholder as Registry['devices.index']['types'],
+  },
+  'devices.claim': {
+    methods: ["POST"],
+    pattern: '/api/v1/devices/claim',
+    tokens: [{"old":"/api/v1/devices/claim","type":0,"val":"api","end":""},{"old":"/api/v1/devices/claim","type":0,"val":"v1","end":""},{"old":"/api/v1/devices/claim","type":0,"val":"devices","end":""},{"old":"/api/v1/devices/claim","type":0,"val":"claim","end":""}],
+    types: placeholder as Registry['devices.claim']['types'],
+  },
+  'devices.show': {
+    methods: ["GET","HEAD"],
+    pattern: '/api/v1/devices/:code',
+    tokens: [{"old":"/api/v1/devices/:code","type":0,"val":"api","end":""},{"old":"/api/v1/devices/:code","type":0,"val":"v1","end":""},{"old":"/api/v1/devices/:code","type":0,"val":"devices","end":""},{"old":"/api/v1/devices/:code","type":1,"val":"code","end":""}],
+    types: placeholder as Registry['devices.show']['types'],
+  },
+  'devices.update': {
+    methods: ["PATCH"],
+    pattern: '/api/v1/devices/:code',
+    tokens: [{"old":"/api/v1/devices/:code","type":0,"val":"api","end":""},{"old":"/api/v1/devices/:code","type":0,"val":"v1","end":""},{"old":"/api/v1/devices/:code","type":0,"val":"devices","end":""},{"old":"/api/v1/devices/:code","type":1,"val":"code","end":""}],
+    types: placeholder as Registry['devices.update']['types'],
+  },
+  'devices.release': {
+    methods: ["POST"],
+    pattern: '/api/v1/devices/:code/release',
+    tokens: [{"old":"/api/v1/devices/:code/release","type":0,"val":"api","end":""},{"old":"/api/v1/devices/:code/release","type":0,"val":"v1","end":""},{"old":"/api/v1/devices/:code/release","type":0,"val":"devices","end":""},{"old":"/api/v1/devices/:code/release","type":1,"val":"code","end":""},{"old":"/api/v1/devices/:code/release","type":0,"val":"release","end":""}],
+    types: placeholder as Registry['devices.release']['types'],
+  },
   'client.token.destroy': {
     methods: ["POST"],
     pattern: '/api/v1/auth/token/revoke',
@@ -101,12 +137,6 @@ const routes = {
     pattern: '/api/v1/gw/register',
     tokens: [{"old":"/api/v1/gw/register","type":0,"val":"api","end":""},{"old":"/api/v1/gw/register","type":0,"val":"v1","end":""},{"old":"/api/v1/gw/register","type":0,"val":"gw","end":""},{"old":"/api/v1/gw/register","type":0,"val":"register","end":""}],
     types: placeholder as Registry['gateway.register']['types'],
-  },
-  'gateway.claim': {
-    methods: ["POST"],
-    pattern: '/api/v1/gw/claim',
-    tokens: [{"old":"/api/v1/gw/claim","type":0,"val":"api","end":""},{"old":"/api/v1/gw/claim","type":0,"val":"v1","end":""},{"old":"/api/v1/gw/claim","type":0,"val":"gw","end":""},{"old":"/api/v1/gw/claim","type":0,"val":"claim","end":""}],
-    types: placeholder as Registry['gateway.claim']['types'],
   },
   'gateway.provision': {
     methods: ["GET","HEAD"],
@@ -125,12 +155,6 @@ const routes = {
     pattern: '/api/v1/gw/results',
     tokens: [{"old":"/api/v1/gw/results","type":0,"val":"api","end":""},{"old":"/api/v1/gw/results","type":0,"val":"v1","end":""},{"old":"/api/v1/gw/results","type":0,"val":"gw","end":""},{"old":"/api/v1/gw/results","type":0,"val":"results","end":""}],
     types: placeholder as Registry['gateway.results']['types'],
-  },
-  'auth.new_account.store': {
-    methods: ["POST"],
-    pattern: '/api/v1/auth/signup',
-    tokens: [{"old":"/api/v1/auth/signup","type":0,"val":"api","end":""},{"old":"/api/v1/auth/signup","type":0,"val":"v1","end":""},{"old":"/api/v1/auth/signup","type":0,"val":"auth","end":""},{"old":"/api/v1/auth/signup","type":0,"val":"signup","end":""}],
-    types: placeholder as Registry['auth.new_account.store']['types'],
   },
   'auth.access_tokens.store': {
     methods: ["POST"],
@@ -198,6 +222,12 @@ const routes = {
     tokens: [{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":0,"val":"api","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":0,"val":"tenants","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":1,"val":"uid","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":0,"val":"clients","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid","type":1,"val":"clientUid","end":""}],
     types: placeholder as Registry['admin.clients.update']['types'],
   },
+  'admin.clients.rotate_secret': {
+    methods: ["POST"],
+    pattern: '/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret',
+    tokens: [{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"api","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"tenants","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":1,"val":"uid","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"clients","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":1,"val":"clientUid","end":""},{"old":"/api/v1/admin/tenants/:uid/clients/:clientUid/rotate-secret","type":0,"val":"rotate-secret","end":""}],
+    types: placeholder as Registry['admin.clients.rotate_secret']['types'],
+  },
   'admin.webhooks.index': {
     methods: ["GET","HEAD"],
     pattern: '/api/v1/admin/tenants/:uid/webhooks',
@@ -252,6 +282,18 @@ const routes = {
     tokens: [{"old":"/api/v1/admin/audit","type":0,"val":"api","end":""},{"old":"/api/v1/admin/audit","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/audit","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/audit","type":0,"val":"audit","end":""}],
     types: placeholder as Registry['admin.audit.index']['types'],
   },
+  'admin.allowances.index': {
+    methods: ["GET","HEAD"],
+    pattern: '/api/v1/admin/allowances',
+    tokens: [{"old":"/api/v1/admin/allowances","type":0,"val":"api","end":""},{"old":"/api/v1/admin/allowances","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/allowances","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/allowances","type":0,"val":"allowances","end":""}],
+    types: placeholder as Registry['admin.allowances.index']['types'],
+  },
+  'admin.allowances.show': {
+    methods: ["GET","HEAD"],
+    pattern: '/api/v1/admin/allowances/:simUid',
+    tokens: [{"old":"/api/v1/admin/allowances/:simUid","type":0,"val":"api","end":""},{"old":"/api/v1/admin/allowances/:simUid","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/allowances/:simUid","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/allowances/:simUid","type":0,"val":"allowances","end":""},{"old":"/api/v1/admin/allowances/:simUid","type":1,"val":"simUid","end":""}],
+    types: placeholder as Registry['admin.allowances.show']['types'],
+  },
   'admin.jobs.index': {
     methods: ["GET","HEAD"],
     pattern: '/api/v1/admin/jobs',
@@ -288,18 +330,6 @@ const routes = {
     tokens: [{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"api","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"gateways","end":""},{"old":"/api/v1/admin/gateways/:uid","type":1,"val":"uid","end":""}],
     types: placeholder as Registry['admin.gateways.update']['types'],
   },
-  'admin.gateways.approve': {
-    methods: ["POST"],
-    pattern: '/api/v1/admin/gateways/:uid/approve',
-    tokens: [{"old":"/api/v1/admin/gateways/:uid/approve","type":0,"val":"api","end":""},{"old":"/api/v1/admin/gateways/:uid/approve","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/gateways/:uid/approve","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/gateways/:uid/approve","type":0,"val":"gateways","end":""},{"old":"/api/v1/admin/gateways/:uid/approve","type":1,"val":"uid","end":""},{"old":"/api/v1/admin/gateways/:uid/approve","type":0,"val":"approve","end":""}],
-    types: placeholder as Registry['admin.gateways.approve']['types'],
-  },
-  'admin.gateways.claimCode': {
-    methods: ["POST"],
-    pattern: '/api/v1/admin/gateways/:uid/claim-code',
-    tokens: [{"old":"/api/v1/admin/gateways/:uid/claim-code","type":0,"val":"api","end":""},{"old":"/api/v1/admin/gateways/:uid/claim-code","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/gateways/:uid/claim-code","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/gateways/:uid/claim-code","type":0,"val":"gateways","end":""},{"old":"/api/v1/admin/gateways/:uid/claim-code","type":1,"val":"uid","end":""},{"old":"/api/v1/admin/gateways/:uid/claim-code","type":0,"val":"claim-code","end":""}],
-    types: placeholder as Registry['admin.gateways.claimCode']['types'],
-  },
   'admin.gateways.diagnostics': {
     methods: ["GET","HEAD"],
     pattern: '/api/v1/admin/gateways/:uid/diagnostics',
@@ -317,6 +347,12 @@ const routes = {
     pattern: '/api/v1/admin/gateways/:uid/disable',
     tokens: [{"old":"/api/v1/admin/gateways/:uid/disable","type":0,"val":"api","end":""},{"old":"/api/v1/admin/gateways/:uid/disable","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/gateways/:uid/disable","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/gateways/:uid/disable","type":0,"val":"gateways","end":""},{"old":"/api/v1/admin/gateways/:uid/disable","type":1,"val":"uid","end":""},{"old":"/api/v1/admin/gateways/:uid/disable","type":0,"val":"disable","end":""}],
     types: placeholder as Registry['admin.gateways.disable']['types'],
+  },
+  'admin.gateways.destroy': {
+    methods: ["DELETE"],
+    pattern: '/api/v1/admin/gateways/:uid',
+    tokens: [{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"api","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"v1","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"admin","end":""},{"old":"/api/v1/admin/gateways/:uid","type":0,"val":"gateways","end":""},{"old":"/api/v1/admin/gateways/:uid","type":1,"val":"uid","end":""}],
+    types: placeholder as Registry['admin.gateways.destroy']['types'],
   },
   'admin.operators.index': {
     methods: ["GET","HEAD"],

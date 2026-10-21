@@ -1,3 +1,4 @@
+import { GatewayAssignment } from '#enums/gateway_status'
 import vine from '@vinejs/vine'
 import { CLIENT_ABILITIES } from '#enums/ability'
 import { BodyRetention, TenantStatus, UserRole } from '#enums/tenant'
@@ -64,6 +65,11 @@ export const searchMessagesValidator = vine.create({
   recipient: vine.string().trim().maxLength(32).optional(),
   reference: vine.string().trim().maxLength(128).optional(),
   gateway: vine.string().trim().maxLength(40).optional(),
+
+  /**
+   * One SIM slot, by uid: "everything slot 2 of that phone sent today".
+   */
+  sim: vine.string().trim().maxLength(40).optional(),
   from: vine.date().optional(),
   to: vine.date().optional(),
   limit: vine.number().min(1).max(200).optional(),
@@ -100,6 +106,14 @@ export const updateGatewayValidator = vine.create({
   maxInFlight: vine.number().min(1).max(50).optional(),
 
   isActive: vine.boolean().optional(),
+
+  /**
+   * What the device is for. `tenant` needs `tenant` (a tenant uid) and makes
+   * the phone that tenant's own; `pool` puts it in the shared fleet;
+   * `unassigned` takes it out of service without disabling it.
+   */
+  assignment: vine.enum(Object.values(GatewayAssignment)).optional(),
+  tenant: vine.string().trim().maxLength(40).nullable().optional(),
 })
 
 export const createStaffValidator = vine.create({
@@ -143,6 +157,12 @@ export const updateSimValidator = vine.create({
 
   /** Null lifts the cap entirely. */
   dailyQuota: vine.number().min(1).max(100_000).nullable().optional(),
+
+  /**
+   * Distinct recipients this SIM may message per day, overriding its
+   * operator's tariff. Null goes back to inheriting from the operator.
+   */
+  dailyRecipientLimit: vine.number().withoutDecimals().min(1).max(100_000).nullable().optional(),
 
   balanceCheckIntervalMin: vine.number().min(15).max(1440).optional(),
 

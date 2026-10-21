@@ -19,14 +19,13 @@ import { controllers } from '#generated/controllers'
 router
   .group(() => {
     /**
-     * Open by necessity: a device with no approval has no credential yet.
-     * Neither endpoint grants anything on its own.
+     * Open by necessity: a new device has no credential yet. Registering
+     * grants nothing on its own; the device carries no traffic until it is
+     * assigned.
      */
     router
       .post('register', [controllers.gateways.GatewayRegistration, 'store'])
       .as('gateway.register')
-
-    router.post('claim', [controllers.gateways.GatewayRegistration, 'claim']).as('gateway.claim')
 
     router
       .group(() => {

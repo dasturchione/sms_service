@@ -156,6 +156,29 @@ export default class TenantService {
   }
 
   /**
+   * Replaces a client's secret, for one that leaked or was lost.
+   *
+   * The client keeps its id, name and abilities, so the tenant only swaps one
+   * value in their config. Every token issued under the old secret is revoked
+   * at the same moment: whoever holds a leaked secret has probably already
+   * exchanged it for a token, and rotating without revoking would leave that
+   * token working until it expired.
+   */
+  static async rotateClientSecret(
+    tenantId: number,
+    uid: string
+  ): Promise<{ client: ApiClient; clientSecret: string }> {
+    const client = await this.findClient(tenantId, uid)
+    const clientSecret = randomBytes(32).toString('base64url')
+
+    client.clientSecretHash = await hash.make(clientSecret)
+    await client.save()
+    await this.revokeTokens(client)
+
+    return { client, clientSecret }
+  }
+
+  /**
    * Disabling revokes the client's live tokens as well.
    *
    * Marking it inactive alone would leave every already-issued token working
@@ -180,13 +203,15 @@ export default class TenantService {
 
     await client.save()
 
-    if (input.isActive === false) {
-      const tokens = await ApiClient.accessTokens.all(client)
-      for (const token of tokens) {
-        await ApiClient.accessTokens.delete(client, token.identifier)
-      }
-    }
+    if (input.isActive === false) await this.revokeTokens(client)
 
     return client
+  }
+
+  private static async revokeTokens(client: ApiClient) {
+    const tokens = await ApiClient.accessTokens.all(client)
+    for (const token of tokens) {
+      await ApiClient.accessTokens.delete(client, token.identifier)
+    }
   }
 }

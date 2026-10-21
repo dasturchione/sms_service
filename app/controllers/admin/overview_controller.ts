@@ -24,6 +24,12 @@ export default class AdminOverviewController {
       gateways: snapshot.gateways,
       jobs: snapshot.jobs,
       recent: snapshot.recent,
+
+      /**
+       * How much of today's distinct-recipient allowance the fleet has left,
+       * and how many messages are already waiting because it ran out.
+       */
+      allowance: snapshot.allowance,
       tenants,
       today,
       /**

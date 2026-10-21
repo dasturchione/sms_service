@@ -1,3 +1,6 @@
+import MessageRoutes from '#services/admin/message_routes'
+import RecipientAllowance from '#services/sms/recipient_allowance'
+import { billingDate } from '#utils/billing_day'
 import type { HttpContext } from '@adonisjs/core/http'
 import ExplorerService from '#services/admin/explorer_service'
 import SmsService from '#services/sms/sms_service'
@@ -22,6 +25,14 @@ export default class AdminExplorerController {
     const filters = await request.validateUsing(searchMessagesValidator)
     const { data, tenants, nextCursor } = await ExplorerService.messages(filters)
 
+    const [routes, sentToday] = await Promise.all([
+      MessageRoutes.forMessages(data),
+      RecipientAllowance.sentTodayByRecipient(
+        data.map((message) => message.recipientNormalized),
+        billingDate()
+      ),
+    ])
+
     return serialize.withoutWrapping({
       data: data.map((message) => ({
         ...new SmsMessageTransformer(message).toObject(),
@@ -31,6 +42,17 @@ export default class AdminExplorerController {
          * thing the tenant-facing shape has no reason to carry.
          */
         tenant: tenants[message.tenantId] ?? null,
+
+        /**
+         * Which phone, slot and SIM number it went out on. For a message that
+         * failed and was retried, the SIM it last tried.
+         */
+        route: routes.get(String(message.id)) ?? null,
+
+        /**
+         * How many messages this recipient has had today, across every SIM.
+         */
+        recipientSentToday: sentToday.get(message.recipientNormalized) ?? 0,
       })),
       meta: { nextCursor },
     })
@@ -39,9 +61,17 @@ export default class AdminExplorerController {
   async message({ params, serialize }: HttpContext) {
     const { message, events, attempts, tenant } = await ExplorerService.message(params.uid)
 
+    const [messageRoutes, attemptRoutes, sentToday] = await Promise.all([
+      MessageRoutes.forMessages([message]),
+      MessageRoutes.forAttempts(attempts),
+      RecipientAllowance.sentTodayByRecipient([message.recipientNormalized], billingDate()),
+    ])
+
     return serialize({
       message: SmsMessageTransformer.transform(message),
       tenant: tenant ? TenantTransformer.transform(tenant) : null,
+      route: messageRoutes.get(String(message.id)) ?? null,
+      recipientSentToday: sentToday.get(message.recipientNormalized) ?? 0,
 
       /**
        * Which device and SIM each try went through. The timeline says what
@@ -50,8 +80,13 @@ export default class AdminExplorerController {
       attempts: attempts.map((attempt) => ({
         attemptNo: attempt.attemptNo,
         status: attempt.status,
-        gatewayId: attempt.gatewayId,
-        simProfileId: attempt.simProfileId,
+
+        /**
+         * Device, slot and SIM number rather than raw ids: an operator
+         * recognises "Samsung A15, slot 2, +99890..." and not a primary key.
+         */
+        route:
+          attempt.simProfileId === null ? null : (attemptRoutes.get(attempt.simProfileId) ?? null),
         error:
           attempt.errorCode === null
             ? null

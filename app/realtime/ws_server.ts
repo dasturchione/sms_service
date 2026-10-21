@@ -34,6 +34,13 @@ export default class GatewayWebSocketServer {
 
   private httpServer: HttpServer | HttpsServer | null = null
 
+  /**
+   * Disconnect bookkeeping still being written. A socket's close event fires
+   * before its session is recorded as ended, so shutting down without waiting
+   * for these would leave sessions open and gateways marked online.
+   */
+  private pendingTeardowns = new Set<Promise<void>>()
+
   constructor() {
     /**
      * `noServer` because the upgrade is authenticated before a socket is
@@ -112,6 +119,17 @@ export default class GatewayWebSocketServer {
 
     connectionManager.add(connection)
 
+    /**
+     * Frames from one device are handled strictly in the order they arrived.
+     *
+     * The device sends a send result and, seconds later, the delivery report
+     * for the same message. Handled concurrently, the report could take the
+     * row lock first, find the message not yet sent, and be dropped. Ordering
+     * per connection costs nothing: devices are independent of each other, so
+     * different phones still run in parallel.
+     */
+    let frames: Promise<void> = Promise.resolve()
+
     socket.on('message', (raw) => {
       const envelope = parseEnvelope(raw.toString())
 
@@ -124,9 +142,11 @@ export default class GatewayWebSocketServer {
         return
       }
 
-      MessageRouter.handle(connection, envelope).catch((error) => {
-        logger.error({ err: error, gatewayUid: connection.gatewayUid }, 'router rejected a frame')
-      })
+      frames = frames
+        .then(() => MessageRouter.handle(connection, envelope))
+        .catch((error) => {
+          logger.error({ err: error, gatewayUid: connection.gatewayUid }, 'router rejected a frame')
+        })
     })
 
     socket.on('pong', () => connection.touch())
@@ -134,9 +154,13 @@ export default class GatewayWebSocketServer {
       logger.warn({ err: error, gatewayUid: connection.gatewayUid }, 'gateway socket error')
     })
     socket.on('close', (code, reason) => {
-      this.onClose(connection, `${code}:${reason.toString().slice(0, 40)}`).catch((error) => {
-        logger.error({ err: error }, 'failed to tear down gateway session')
-      })
+      const teardown = this.onClose(connection, `${code}:${reason.toString().slice(0, 40)}`)
+        .catch((error) => {
+          logger.error({ err: error }, 'failed to tear down gateway session')
+        })
+        .finally(() => this.pendingTeardowns.delete(teardown))
+
+      this.pendingTeardowns.add(teardown)
     })
 
     connection.send(
@@ -226,5 +250,12 @@ export default class GatewayWebSocketServer {
 
     connectionManager.closeAll('server shutting down')
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+
+    /**
+     * Closing a socket only starts its teardown. Wait for the session and
+     * gateway rows to be written before reporting the server as stopped, or
+     * the process can exit, or the database close, halfway through.
+     */
+    await Promise.allSettled([...this.pendingTeardowns])
   }
 }

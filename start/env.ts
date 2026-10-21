@@ -46,6 +46,18 @@ export default await Env.create(new URL('../', import.meta.url), {
    */
   GATEWAY_NODE_ENABLED: Env.schema.boolean.optional(),
 
+  /**
+   * IANA zone the operators count their day in. Daily caps reset at midnight
+   * here.
+   */
+  BILLING_TIMEZONE: Env.schema.string.optional(),
+
+  /**
+   * `sequential` (fill one SIM's daily recipient allowance before the next) or
+   * `spread` (all SIMs take new recipients). See config/gateway.ts.
+   */
+  ROUTING_FILL_STRATEGY: Env.schema.enum.optional(['sequential', 'spread'] as const),
+
   // Background jobs
   /**
    * Whether this instance drains the job queues. Unrelated to the gateway

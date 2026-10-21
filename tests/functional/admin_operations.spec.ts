@@ -1,3 +1,4 @@
+import Gateway from '#models/gateway'
 import { randomBytes } from 'node:crypto'
 import { test } from '@japa/runner'
 import { DateTime } from 'luxon'
@@ -142,7 +143,11 @@ test.group('admin fleet recovery', () => {
    * token, so a device flipped back to active with no credential would look
    * healthy and never connect.
    */
-  test('re-enabling a device issues a fresh claim code', async ({ client, assert }) => {
+  /**
+   * Disabling keeps the phone's token, so re-enabling is the whole recovery:
+   * nobody has to touch the phone, which is already retrying.
+   */
+  test('re-enabling a device keeps its credential', async ({ client, assert }) => {
     const { bearer } = await createPlatformOperator()
     const { gateway } = await createApprovedGateway()
 
@@ -157,29 +162,18 @@ test.group('admin fleet recovery', () => {
 
     enabled.assertStatus(200)
 
-    const body = (
-      enabled.body() as unknown as {
-        data: { gateway: { status: string; isActive: boolean }; claimCode: string }
-      }
-    ).data
+    const body = (enabled.body() as unknown as { data: { status: string; isActive: boolean } }).data
 
-    assert.isTrue(body.gateway.isActive)
+    assert.isTrue(body.isActive)
 
     /**
      * Offline, not online: it is allowed back, but nothing has heard from it
      * yet and claiming otherwise would put it straight into routing.
      */
-    assert.equal(body.gateway.status, 'offline')
-    assert.isAtLeast(body.claimCode.length, 16)
+    assert.equal(body.status, 'offline')
 
-    /**
-     * The code has to actually work, or the recovery is theatre.
-     */
-    const claimed = await client
-      .post('/api/v1/gw/claim')
-      .json({ deviceId: gateway.deviceId, claimCode: body.claimCode })
-
-    claimed.assertStatus(200)
+    const tokens = await Gateway.accessTokens.all(gateway)
+    assert.lengthOf(tokens, 1)
   })
 })
 
