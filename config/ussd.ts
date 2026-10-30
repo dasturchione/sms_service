@@ -6,6 +6,8 @@
  * see. The numbers here are all about not letting that unreliability turn into
  * either a stuck request or a flood of retries.
  */
+import env from '#start/env'
+
 const ussdConfig = {
   /**
    * How long a session may stay open before it is written off. Generous,
@@ -15,6 +17,13 @@ const ussdConfig = {
   timeoutSeconds: 90,
 
   balance: {
+    /**
+     * Whether the platform dials balance codes on its own. Off by default:
+     * the gateway app no longer carries the call permission and accessibility
+     * service that USSD needs, because they made Play Protect block it.
+     */
+    enabled: env.get('BALANCE_CHECKS_ENABLED', false),
+
     /**
      * Default interval between checks for a SIM that does not set its own.
      * Balances move slowly, and every check occupies the radio that would

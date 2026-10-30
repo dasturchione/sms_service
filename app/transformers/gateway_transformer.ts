@@ -31,6 +31,8 @@ export default class GatewayTransformer extends BaseTransformer<Gateway> {
       isActive: gateway.isActive,
       priority: gateway.priority,
       maxInFlight: gateway.maxInFlight,
+      /** Messages per minute across the device's SIMs. Null: no device cap. */
+      smsPerMinute: gateway.smsPerMinute,
 
       device: {
         manufacturer: gateway.manufacturer,

@@ -128,10 +128,11 @@ const gatewayConfig = {
     fillStrategy: env.get('ROUTING_FILL_STRATEGY', 'spread') as 'sequential' | 'spread',
 
     /**
-     * Cap applied to a SIM whose operator is unknown. Conservative on purpose:
-     * guessing too high gets the SIM blocked, guessing too low only delays.
+     * Cap applied to a SIM with no cap of its own and no known operator.
+     * Off unless configured: a cap is set where it is known, on the operator
+     * or on one SIM, from the admin panel.
      */
-    defaultDailyRecipientLimit: 60,
+    defaultDailyRecipientLimit: env.get('DEFAULT_DAILY_RECIPIENT_LIMIT') ?? null,
 
     /**
      * How long a message waits before looking again once every SIM has used

@@ -1,3 +1,4 @@
+import env from '#start/env'
 import { defineConfig } from '@adonisjs/cors'
 
 /**
@@ -13,11 +14,14 @@ const corsConfig = defineConfig({
   enabled: true,
 
   /**
-   * Every origin is allowed, by decision: the API is called with bearer
-   * tokens, not cookies, and the admin panel is served from wherever it is
-   * opened (localhost, a tunnel). Narrow this to a list if that changes.
+   * Explicit allowlist driven by the CORS_ORIGIN env variable
+   * (comma separated). The admin SPA runs on a different origin
+   * (http://localhost:5173 in development) so it must be listed there.
    */
-  origin: true,
+  origin: (env.get('CORS_ORIGIN') ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 
   /**
    * HTTP methods accepted for cross-origin requests.

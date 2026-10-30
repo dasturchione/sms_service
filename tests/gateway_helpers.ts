@@ -77,6 +77,8 @@ export async function createApprovedGateway(
     priority?: number
     tenantId?: number | null
     maxInFlight?: number
+    /** The device's own rate across its SIMs. */
+    deviceSmsPerMinute?: number | null
     /** Override of the SIM's daily distinct-recipient cap. */
     recipientLimit?: number | null
   } = {}
@@ -101,6 +103,7 @@ export async function createApprovedGateway(
     tenantId: options.tenantId ?? null,
     priority: options.priority ?? gateway.priority,
     maxInFlight: options.maxInFlight ?? gateway.maxInFlight,
+    smsPerMinute: options.deviceSmsPerMinute ?? null,
   })
   await gateway.save()
 
