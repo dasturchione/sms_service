@@ -74,6 +74,7 @@ export default class AdminGatewaysController {
       ...(payload.name === undefined ? {} : { name: payload.name }),
       ...(payload.priority === undefined ? {} : { priority: payload.priority }),
       ...(payload.maxInFlight === undefined ? {} : { maxInFlight: payload.maxInFlight }),
+      ...(payload.smsPerMinute === undefined ? {} : { smsPerMinute: payload.smsPerMinute }),
       ...(payload.isActive === undefined ? {} : { isActive: payload.isActive }),
     })
     await gateway.save()

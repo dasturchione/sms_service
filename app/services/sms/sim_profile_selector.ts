@@ -26,6 +26,8 @@ export type RouteCandidate = {
   operatorCode: string | null
   phonePrefixes: string[]
   smsPerMinute: number
+  /** The device's own rate across all its SIMs. Null: only the SIM paces. */
+  gatewaySmsPerMinute: number | null
   smsBalance: number | null
   /** Successful sends over total attempts in the recent window, 0..1. */
   successRate: number
@@ -166,7 +168,8 @@ export default class SimProfileSelector {
   }
 
   /**
-   * Reserves a SIM by pushing its next availability forward.
+   * Reserves a SIM by pushing its next availability forward, and the device's
+   * too when the device has a rate of its own.
    *
    * The conditional update decides which worker gets the route. It also takes
    * the SIM's row lock and keeps it until the transaction ends, which is what
@@ -188,21 +191,52 @@ export default class SimProfileSelector {
       [spacingSeconds, candidate.simProfileId]
     )
 
-    return (result.rowCount ?? 0) === 1
+    if ((result.rowCount ?? 0) !== 1) return false
+    if (candidate.gatewaySmsPerMinute === null) return true
+
+    /**
+     * The other SIM of the same phone may have taken the device's window a
+     * moment ago. Then this SIM was free but the phone is not; give the SIM
+     * back (it was free, so clearing it restores it exactly).
+     */
+    const deviceSpacing = 60 / Math.max(1, candidate.gatewaySmsPerMinute)
+    const device = await client.rawQuery(
+      `UPDATE gateways
+          SET next_available_at = now() + (? * interval '1 second')
+        WHERE id = ?
+          AND (next_available_at IS NULL OR next_available_at <= now())`,
+      [deviceSpacing, candidate.gatewayId]
+    )
+
+    if ((device.rowCount ?? 0) === 1) return true
+
+    await client
+      .from('sim_profiles')
+      .where('id', candidate.simProfileId)
+      .update({ next_available_at: null, updated_at: new Date() })
+
+    return false
   }
 
   /**
-   * Undoes a reservation that did not turn into a send, so the SIM is not idle
-   * for a whole pacing window.
+   * Undoes a reservation that did not turn into a send, so neither the SIM nor
+   * the device is idle for a whole pacing window.
    *
    * Pass the transaction when undoing inside the one that reserved: a separate
    * connection would wait on the row lock that transaction is holding.
    */
-  static async release(simProfileId: number, client: Client = db.connection()): Promise<void> {
+  static async release(candidate: RouteCandidate, client: Client = db.connection()): Promise<void> {
     await client
       .from('sim_profiles')
-      .where('id', simProfileId)
+      .where('id', candidate.simProfileId)
       .update({ next_available_at: null, updated_at: new Date() })
+
+    if (candidate.gatewaySmsPerMinute !== null) {
+      await client
+        .from('gateways')
+        .where('id', candidate.gatewayId)
+        .update({ next_available_at: null })
+    }
   }
 
   private static tryOrWait(ordered: RouteCandidate[], now: DateTime): RoutePlan {
@@ -239,6 +273,8 @@ export default class SimProfileSelector {
         'g.uid as gateway_uid',
         'g.priority as gateway_priority',
         'g.max_in_flight',
+        'g.sms_per_minute as gateway_sms_per_minute',
+        'g.next_available_at as gateway_next_available_at',
         'o.code as operator_code',
         'o.phone_prefixes'
       )
@@ -276,6 +312,13 @@ export default class SimProfileSelector {
       )
       .select(
         db.raw(`(sp.next_available_at IS NULL OR sp.next_available_at <= now()) as paced_free`)
+      )
+      .select(
+        db.raw(
+          `(g.sms_per_minute IS NULL
+              OR g.next_available_at IS NULL
+              OR g.next_available_at <= now()) as device_paced_free`
+        )
       )
       /**
        * The allowance ledger: how many numbers this SIM has taken today, and
@@ -359,16 +402,29 @@ export default class SimProfileSelector {
   private static toCandidate(row: Record<string, any>): RouteCandidate {
     const inFlight = Number(row.in_flight ?? 0)
     const maxInFlight = Number(row.max_in_flight)
-    const pacedFree = Boolean(row.paced_free)
+    const simFree = Boolean(row.paced_free)
+    const deviceFree = Boolean(row.device_paced_free)
+    const pacedFree = simFree && deviceFree
     const slotsFree = inFlight < maxInFlight
 
+    /**
+     * Free again when both windows have passed: the later of the two.
+     */
     let availableAt: DateTime | null
     if (!slotsFree) {
       availableAt = null
-    } else if (pacedFree || !row.next_available_at) {
+    } else if (pacedFree) {
       availableAt = DateTime.now()
     } else {
-      availableAt = DateTime.fromJSDate(new Date(row.next_available_at))
+      const windows = [
+        simFree ? null : row.next_available_at,
+        deviceFree ? null : row.gateway_next_available_at,
+      ]
+        .filter(Boolean)
+        .map((value) => DateTime.fromJSDate(new Date(value)))
+        .sort((a, b) => b.toMillis() - a.toMillis())
+
+      availableAt = windows[0] ?? DateTime.now()
     }
 
     return {
@@ -384,6 +440,8 @@ export default class SimProfileSelector {
       operatorCode: row.operator_code ?? null,
       phonePrefixes: Array.isArray(row.phone_prefixes) ? row.phone_prefixes : [],
       smsPerMinute: Number(row.sms_per_minute),
+      gatewaySmsPerMinute:
+        row.gateway_sms_per_minute === null ? null : Number(row.gateway_sms_per_minute),
       smsBalance: row.sms_balance === null ? null : Number(row.sms_balance),
       successRate: row.success_rate === null ? 1 : Number(row.success_rate),
       lastUsedAt: row.last_used_at ? DateTime.fromJSDate(new Date(row.last_used_at)) : null,

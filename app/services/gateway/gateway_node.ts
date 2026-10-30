@@ -70,12 +70,14 @@ export default class GatewayNode {
      * because a USSD session needs a socket: it can only run on the process
      * that actually holds the device.
      */
-    this.balanceTimer = setInterval(() => {
-      BalanceScheduler.run().catch((error) =>
-        logger.error({ err: error }, 'balance scheduler failed')
-      )
-    }, ussdConfig.balance.intervalMs)
-    this.balanceTimer.unref()
+    if (ussdConfig.balance.enabled) {
+      this.balanceTimer = setInterval(() => {
+        BalanceScheduler.run().catch((error) =>
+          logger.error({ err: error }, 'balance scheduler failed')
+        )
+      }, ussdConfig.balance.intervalMs)
+      this.balanceTimer.unref()
+    }
 
     logger.info({ nodeId: gatewayConfig.nodeId }, 'gateway node started')
   }

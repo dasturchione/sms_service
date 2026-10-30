@@ -16,6 +16,7 @@ function candidate(overrides: Partial<RouteCandidate> = {}): RouteCandidate {
     operatorCode: 'beeline',
     phonePrefixes: [],
     smsPerMinute: 1,
+    gatewaySmsPerMinute: null,
     smsBalance: null,
     successRate: 1,
     lastUsedAt: null,

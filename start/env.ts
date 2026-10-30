@@ -56,6 +56,17 @@ export default await Env.create(new URL('../', import.meta.url), {
    * `sequential` (fill one SIM's daily recipient allowance before the next) or
    * `spread` (all SIMs take new recipients). See config/gateway.ts.
    */
+  /**
+   * Distinct recipients per SIM per day for a SIM whose operator is unknown
+   * and which has no cap of its own. Unset means no cap.
+   */
+  /**
+   * Scheduled USSD balance checks. Off unless the gateway app supports them.
+   */
+  BALANCE_CHECKS_ENABLED: Env.schema.boolean.optional(),
+
+  DEFAULT_DAILY_RECIPIENT_LIMIT: Env.schema.number.optional(),
+
   ROUTING_FILL_STRATEGY: Env.schema.enum.optional(['sequential', 'spread'] as const),
 
   // Background jobs

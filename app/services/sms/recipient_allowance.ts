@@ -158,7 +158,7 @@ export default class RecipientAllowance {
    * Today's usage for every SIM, with the cap that applies to it. Feeds the
    * admin overview and the metrics endpoint.
    */
-  static async usageBySim(usageDate: string, defaultLimit: number) {
+  static async usageBySim(usageDate: string, defaultLimit: number | null) {
     const rows = await db
       .from('sim_profiles as sp')
       .join('gateways as g', 'g.id', 'sp.gateway_id')
@@ -271,20 +271,20 @@ export default class RecipientAllowance {
 
   /**
    * The cap for a SIM: its own override, else its operator's tariff, else the
-   * conservative default for a SIM whose operator is unknown. An operator row
-   * with an explicit null means the tariff has no cap.
+   * configured default for a SIM whose operator is unknown. Null at any level
+   * that decides means no cap, which is also the default.
    *
    * A tenant's own phone is the exception: its SIM and tariff are the
    * tenant's, which we know nothing about, so only a cap set on that SIM
    * applies. Expects `sp`, `g` and `o` in the query.
    */
-  static effectiveLimitSql(defaultLimit: number) {
+  static effectiveLimitSql(defaultLimit: number | null) {
     return db.raw(
       `CASE
          WHEN g.assignment = 'tenant' THEN sp.daily_recipient_limit
          WHEN sp.daily_recipient_limit IS NOT NULL THEN sp.daily_recipient_limit
          WHEN o.id IS NOT NULL THEN o.daily_recipient_limit
-         ELSE ?
+         ELSE ?::integer
        END AS recipient_limit`,
       [defaultLimit]
     )

@@ -224,7 +224,7 @@ export default class SmsDispatcher {
          * transaction (a second connection would wait on our own lock) and
          * let the next pass plan again from fresh numbers.
          */
-        await SimProfileSelector.release(candidate.simProfileId, trx)
+        await SimProfileSelector.release(candidate, trx)
         continue
       }
 
@@ -423,7 +423,7 @@ export default class SmsDispatcher {
       await SmsAttempt.query({ client: trx }).where('id', String(attempt.id)).delete()
     })
 
-    await SimProfileSelector.release(candidate.simProfileId)
+    await SimProfileSelector.release(candidate)
 
     logger.warn(
       { smsUid: message.uid, gatewayUid: candidate.gatewayUid },

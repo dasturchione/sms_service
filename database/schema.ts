@@ -187,7 +187,7 @@ export class GatewaySessionSchema extends BaseModel {
 }
 
 export class GatewaySchema extends BaseModel {
-  static $columns = ['androidVersion', 'appVersion', 'approvedAt', 'approvedBy', 'assignment', 'battery', 'code', 'createdAt', 'deviceId', 'id', 'isActive', 'isCharging', 'lastConnectedAt', 'lastSeenAt', 'manufacturer', 'maxInFlight', 'model', 'name', 'network', 'nodeId', 'priority', 'signalLevel', 'status', 'tenantId', 'uid', 'updatedAt'] as const
+  static $columns = ['androidVersion', 'appVersion', 'approvedAt', 'approvedBy', 'assignment', 'battery', 'code', 'createdAt', 'deviceId', 'id', 'isActive', 'isCharging', 'lastConnectedAt', 'lastSeenAt', 'manufacturer', 'maxInFlight', 'model', 'name', 'network', 'nextAvailableAt', 'nodeId', 'priority', 'signalLevel', 'smsPerMinute', 'status', 'tenantId', 'uid', 'updatedAt'] as const
   $columns = GatewaySchema.$columns
   @column()
   declare androidVersion: string | null
@@ -227,12 +227,16 @@ export class GatewaySchema extends BaseModel {
   declare name: string | null
   @column()
   declare network: string | null
+  @column.dateTime()
+  declare nextAvailableAt: DateTime | null
   @column()
   declare nodeId: string | null
   @column()
   declare priority: number
   @column()
   declare signalLevel: number | null
+  @column()
+  declare smsPerMinute: number | null
   @column()
   declare status: GatewayStatus
   @column()

@@ -105,6 +105,12 @@ export const updateGatewayValidator = vine.create({
    */
   maxInFlight: vine.number().min(1).max(50).optional(),
 
+  /**
+   * Messages per minute across all of the device's SIMs. Null lifts the
+   * device cap, leaving each SIM's own rate.
+   */
+  smsPerMinute: vine.number().withoutDecimals().min(1).max(600).nullable().optional(),
+
   isActive: vine.boolean().optional(),
 
   /**
